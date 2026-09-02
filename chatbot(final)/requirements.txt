@@ -1,7 +1,0 @@
-streamlit
-chromadb
-sentence-transformers
-google-generativeai
-python-dotenv
-gspread
-oauth2client
