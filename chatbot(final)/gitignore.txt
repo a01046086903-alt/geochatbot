@@ -1,0 +1,12 @@
+# 보안 파일
+api키.env
+google_creds.json
+*.env
+# 대용량 원본 파일 (선택 사항)
+*.pdf
+*.hwpx
+debug_output.txt
+pipeline_output.txt
+# 파이썬 캐시
+__pycache__/
+.gradio/
