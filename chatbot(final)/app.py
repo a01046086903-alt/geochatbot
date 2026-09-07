@@ -302,7 +302,7 @@ def get_system_prompt(section, search_stage):
 
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 현재 답변의 근거 자료는 [지식 출처: {knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처 표기는 시스템이 실제 검색 결과를 바탕으로 답변 뒤에 추가하므로, 답변 안에서 출처명이나 URL을 만들거나 추정하지 마세요.
+1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처 표기는 시스템이 실제 검색 결과를 바탕으로 답변 뒤에 추가하므로, 답변 안에서 출처명이나 URL을 만들거나 추정하지 마세요.
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, 출처 표기 시 페이지 번호를 함께 적어주세요. 단, 텍스트에 페이지 번호가 명시되어 있지 않다면 절대 지어내지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
 4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
@@ -330,9 +330,10 @@ def attach_verified_sources(answer, contexts, search_stage):
 def render_context_source(context):
     """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
     source = context.get("source", "").strip()
-    if "교과서" in source:
+    source_filename = os.path.basename(source)
+    if "교과서" in source_filename:
         label = "교과서"
-    elif "지도서" in source:
+    elif "지도서" in source_filename:
         label = "지도서"
     else:
         return source or "출처 정보 없음"
