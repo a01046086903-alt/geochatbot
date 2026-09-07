@@ -734,4 +734,27 @@ if user_input:
                             
                             # 보기는 별도의 색상 박스에 수직 배치
                             formatted_options = options_part.replace('\n', '<br>')
-                            options_box = f"<div style='background-color: #E8F4F8; border: 1px solid
+                            options_box = f"<div style='background-color: #E8F4F8; border: 1px solid #BFE0EC; padding: 15px; border-radius: 10px; margin: 15px 0; color: #1E6091; font-weight: 500; font-size: 15px; line-height: 1.6;'>{formatted_options}</div>"
+                            st.markdown(options_box, unsafe_allow_html=True)
+                            
+                            with st.expander("✅ 정답 및 해설 확인하기"):
+                                st.markdown(answer_part)
+                                
+                            st.session_state.messages.append({
+                                "role": "assistant", 
+                                "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n{options_box}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
+                            })
+                        else:
+                            question_part = q_and_options.replace("[문제]", "").strip()
+                            st.markdown(question_part)
+                            
+                            with st.expander("✅ 정답 및 해설 확인하기"):
+                                st.markdown(answer_part)
+                                
+                            st.session_state.messages.append({
+                                "role": "assistant", 
+                                "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
+                            })
+                    else:
+                        st.markdown(quiz_text)
+                        st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
