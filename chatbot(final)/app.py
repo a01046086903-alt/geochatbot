@@ -715,4 +715,3 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
-
