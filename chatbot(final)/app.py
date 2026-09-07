@@ -233,13 +233,30 @@ def get_system_prompt(section, search_stage):
 
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 제공된 [지식]이 있다면 반드시 그 내용을 기반으로 답변해야 하며, 답변 맨 끝에 제공된 'Source' 정보를 그대로 활용해 무조건 '[출처: OOO]' 형식으로 기재하세요. (예: [출처: 교과서 p.106], [출처: 네이버 지식백과 - 오세아니아]).
+1. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처 표기는 시스템이 실제 검색 결과를 바탕으로 답변 뒤에 추가하므로, 답변 안에서 출처명이나 URL을 만들거나 추정하지 마세요.
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, 출처 표기 시 페이지 번호를 함께 적어주세요. 단, 텍스트에 페이지 번호가 명시되어 있지 않다면 절대 지어내지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
-4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하고, 답변 맨 끝에는 참고할 만한 출처(예: 특정 기관 홈페이지 등)와 인터넷 주소(URL)를 '[출처: OOO (URL)]' 형식으로 기재하세요.
+4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
 5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt}"
+
+def attach_verified_sources(answer, contexts, search_stage):
+    """모델이 만든 출처를 버리고 실제 검색 결과의 출처만 답변에 추가"""
+    answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
+    answer = re.sub(r"(?im)^\s*(?:\*\*)?출처\s*:\s*.*$", "", answer).strip()
+    answer = re.sub(r"https?://\S+", "", answer).strip()
+    if "선생님은 사회 수업을 위한 챗봇이에요" in answer:
+        return answer
+    if contexts:
+        sources = []
+        for context in contexts:
+            source = context.get("source", "").strip()
+            if source and source not in sources:
+                sources.append(source)
+        if sources:
+            return f"{answer}\n\n[출처: {'; '.join(sources)}]"
+    return f"{answer}\n\n[출처: 검증된 외부 출처 없음 - Gemini 자체 지식]"
 
 @st.cache_data
 def get_initial_questions(section):
@@ -580,27 +597,11 @@ if user_input:
                 
                 try:
                     response = model.generate_content(full_prompt)
-                    bot_answer = response.text
+                    bot_answer = attach_verified_sources(response.text, contexts, search_stage)
                     # 답변이 생성된 직후에 각 Context에서 답변에 대응하는 핵심 문장을 추출하여 저장
                     if contexts:
                         for c in contexts:
                             c['key_sentence'] = extract_key_sentence(c['doc'], bot_answer)
-                    elif search_stage == "Gemini":
-                        import re
-                        match = re.search(r'\[출처:\s*(.*?)\]', bot_answer)
-                        if match:
-                            gemini_source = match.group(1).strip()
-                            bot_answer = bot_answer.replace(match.group(0), "").strip()
-                            
-                            url_match = re.search(r'\((http[s]?://[^\)]+)\)', gemini_source)
-                            link = ""
-                            if url_match:
-                                link = url_match.group(1)
-                                gemini_source = gemini_source.replace(url_match.group(0), "").strip()
-                            
-                            contexts = [{"doc": "선생님이 가진 배경지식을 활용하여 작성한 답변입니다.", "source": f"제미나이 자체 지식 - {gemini_source}", "link": link, "key_sentence": "별도의 외부 문서 검색 없이 선생님의 지식으로 답변을 구성했습니다."}]
-                        elif "선생님은 사회 수업을 위한 챗봇이에요" not in bot_answer:
-                            contexts = [{"doc": "선생님이 가진 배경지식을 활용하여 작성한 답변입니다.", "source": "제미나이 자체 답변", "link": "", "key_sentence": "별도의 외부 문서 검색 없이 선생님의 지식으로 답변을 구성했습니다."}]
                 except Exception as e:
                     bot_answer = f"[오류] 답변 생성 중 문제가 발생했습니다: {e}"
             else:
