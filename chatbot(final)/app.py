@@ -37,6 +37,7 @@ load_dotenv(env_path if os.path.exists(env_path) else None)
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "Z3ctnxISEw4WbUOKGxP7")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "B_RyJtcnoJ")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwVBeI1lO0j0SrT_CFwHqJu_txhwG7ORomkc5ex91afg")
+LOCAL_DISTANCE_THRESHOLD = 0.45
 
 # ----------------------------------------------------------------------------
 # 전역 리소스 초기화 (Streamlit Cache 활용)
@@ -172,7 +173,7 @@ def get_verified_local_contexts(query):
     for dist, doc, meta in zip(
         results['distances'][0], results['documents'][0], results['metadatas'][0]
     ):
-        if dist >= 0.55:
+        if dist >= LOCAL_DISTANCE_THRESHOLD:
             continue
 
         source_name = meta.get('source', '')
@@ -197,7 +198,7 @@ def search_hybrid(query):
             filtered = filter_relevant_contexts(query, contexts)
             if filtered:
                 return filtered, "Local"
-            if contexts[0]["distance"] < 0.28:
+            if contexts[0]["distance"] < LOCAL_DISTANCE_THRESHOLD:
                 return contexts[:5], "Local"
     except Exception as e:
         print(f"ChromaDB 검색 오류: {e}")
@@ -717,4 +718,3 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
-
