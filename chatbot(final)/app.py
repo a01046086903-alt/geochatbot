@@ -184,9 +184,9 @@ def get_verified_local_contexts(query):
         page = meta.get('page', '')
         page_str = f" p.{page}" if page else ""
         if '교과서' in source_name:
-            display_source = f"교과서{page_str}"
+            display_source = f"오세아니아_단원_교과서.md{page_str}"
         elif '지도서' in source_name:
-            display_source = f"지도서{page_str}"
+            display_source = f"오세아니아_단원_지도서.md{page_str}"
         else:
             continue
 
@@ -213,11 +213,13 @@ def get_verified_local_contexts(query):
             matched_terms = [term for term in query_terms if term in chunk]
             if not chunk.strip() or not matched_terms:
                 continue
-            source_label = "교과서" if "교과서" in filename else "지도서"
+            source_label = filename
+            page_match = re.search(r"p(\d+(?:~\d+)?)", chunk)
+            page_suffix = f" p.{page_match.group(1)}" if page_match else ""
             if not any(c["doc"] == chunk and c["source"].startswith(source_label) for c in contexts):
                 direct_contexts.append({
                     "doc": chunk.strip(),
-                    "source": source_label,
+                    "source": f"{source_label}{page_suffix}",
                     "distance": 0.0,
                     "keyword_score": len(matched_terms),
                 })
@@ -306,12 +308,27 @@ def attach_verified_sources(answer, contexts, search_stage):
     if contexts:
         sources = []
         for context in contexts:
-            source = context.get("source", "").strip()
+            source = render_context_source(context)
             if source and source not in sources:
                 sources.append(source)
         if sources:
             return f"{answer}\n\n[출처: {'; '.join(sources)}]"
     return f"{answer}\n\n[출처: 검증된 외부 출처 없음 - Gemini 자체 지식]"
+
+def render_context_source(context):
+    """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
+    source = context.get("source", "").strip()
+    if "교과서" in source:
+        label = "교과서"
+    elif "지도서" in source:
+        label = "지도서"
+    else:
+        return source or "출처 정보 없음"
+
+    page_match = re.search(r"p\.?\s*(\d+(?:~\d+)?)", source)
+    if page_match:
+        return f"{label} p.{page_match.group(1)}"
+    return f"{label} (페이지 정보 없음)"
 
 @st.cache_data
 def get_initial_questions(section):
@@ -605,7 +622,7 @@ for idx, msg in enumerate(st.session_state.messages):
                 with st.expander("🔍 참고한 핵심 내용 보기"):
                     for c in msg["contexts"]:
                         key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** {c['source']}  \n**핵심 문장:** {key_sentence}")
+                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
                         if c.get("link"):
                             st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
                         st.markdown("---")
@@ -676,7 +693,7 @@ if user_input:
                 with st.expander("🔍 참고한 핵심 내용 보기"):
                     for c in contexts:
                         key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** {c['source']}  \n**핵심 문장:** {key_sentence}")
+                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
                         if c.get("link"):
                             st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
                         st.markdown("---")
