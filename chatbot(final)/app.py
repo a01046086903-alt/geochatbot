@@ -195,11 +195,8 @@ def search_hybrid(query):
     try:
         contexts = get_verified_local_contexts(query)
         if contexts:
-            filtered = filter_relevant_contexts(query, contexts)
-            if filtered:
-                return filtered, "Local"
-            if contexts[0]["distance"] < LOCAL_DISTANCE_THRESHOLD:
-                return contexts[:5], "Local"
+            # 벡터 거리로 검증된 로컬 자료는 LLM 필터가 제거하지 않도록 직접 사용한다.
+            return contexts[:5], "Local"
     except Exception as e:
         print(f"ChromaDB 검색 오류: {e}")
 
@@ -718,3 +715,4 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
+
