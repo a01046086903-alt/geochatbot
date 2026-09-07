@@ -447,7 +447,7 @@ with st.sidebar:
     st.markdown("---")
     st.info("선택한 단원에 따라 선생님의 지도 방식이 달라집니다!")
     
-    try:
+try:
         with open("2022_사회과_교육과정_성취기준_오세아니아.md", "r", encoding="utf-8") as f:
             lines = f.readlines()
             if "6-1" in section:
@@ -485,8 +485,12 @@ with st.sidebar:
         with st.popover("📊 영역별 성취수준 보기 (A~E)", use_container_width=True):
             st.markdown(formatted_levels)
             
+    except FileNotFoundError as fnf_error:
+        # 파일이 없을 경우 화면에 직접 에러를 띄웁니다.
+        st.error(f"마크다운 파일을 찾을 수 없습니다. GitHub에 파일이 있는지 확인하세요: {fnf_error.filename}")
     except Exception as e:
-        print(f"사이드바 UI 로드 오류: {e}")
+        # 그 외의 에러도 화면에 표시하여 원인을 알 수 있게 합니다.
+        st.error(f"사이드바 UI 로드 중 오류가 발생했습니다: {e}")
 
 # 세션 상태 초기화
 if "messages" not in st.session_state:
