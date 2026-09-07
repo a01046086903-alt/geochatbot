@@ -330,6 +330,20 @@ def render_context_source(context):
         return f"{label} p.{page_match.group(1)}"
     return f"{label} (페이지 정보 없음)"
 
+def parse_recommended_questions(response_text, fallback):
+    """Gemini 응답에서 질문 목록만 추출해 버튼에 사용할 수 있게 정리한다."""
+    questions = []
+    for line in (response_text or "").splitlines():
+        question = re.sub(r"[*_`]+", "", line)
+        question = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", question).strip()
+        if not question or question.startswith(("질문:", "추천 질문:")):
+            continue
+        if question not in questions:
+            questions.append(question)
+        if len(questions) == 3:
+            break
+    return questions if len(questions) == 3 else fallback
+
 @st.cache_data
 def get_initial_questions(section):
     """성취기준을 바탕으로 3개의 탐구 질문 생성"""
@@ -349,8 +363,10 @@ def get_initial_questions(section):
 반드시 각 질문은 줄바꿈으로 구분된 텍스트로만 출력하세요. (예: 1. 오세아니아 기후는?)"""
 
         response = model.generate_content(prompt)
-        questions = [q.strip().lstrip("1234567890. ") for q in response.text.strip().split('\n') if q.strip()]
-        return questions[:3] if len(questions) >= 3 else ["오세아니아의 기후는 어떤가요?", "태평양의 쓰레기 섬은 왜 생겼나요?", "원주민들은 어떻게 살았나요?"]
+        return parse_recommended_questions(
+            response.text,
+            ["오세아니아의 기후는 어떤가요?", "태평양의 쓰레기 섬은 왜 생겼나요?", "원주민들은 어떻게 살았나요?"],
+        )
     except Exception as e:
         print(f"초기 질문 생성 오류: {e}")
         return ["오세아니아의 기후 특징은 무엇인가요?", "태평양의 환경 문제를 어떻게 해결할 수 있을까요?", "오세아니아의 독특한 동물은 무엇이 있나요?"]
@@ -369,8 +385,10 @@ def get_followup_questions(user_query, bot_response):
 반드시 질문은 핵심만 담아 아주 짧고 간결하게(20자 이내) 작성하세요.
 반드시 각 질문은 줄바꿈으로 구분된 텍스트로만 출력하세요. (예: 1. ~~~?)"""
         response = model.generate_content(prompt)
-        questions = [q.strip().lstrip("1234567890. ") for q in response.text.strip().split('\n') if q.strip()]
-        return questions[:3] if len(questions) >= 3 else ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"]
+        return parse_recommended_questions(
+            response.text,
+            ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"],
+        )
     except Exception as e:
         print(f"후속 질문 생성 오류: {e}")
         return ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"]
