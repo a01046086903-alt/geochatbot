@@ -1,11 +1,21 @@
 import os
 import json
+import re
 import threading
+import sys
 import urllib.parse
 import urllib.request
 from datetime import datetime
 
 import streamlit as st
+
+# Streamlit Cloud 일부 실행 환경의 오래된 SQLite를 ChromaDB가 요구하는 버전으로 대체
+try:
+    import pysqlite3
+    sys.modules["sqlite3"] = pysqlite3
+except ImportError:
+    pass
+
 import chromadb
 from chromadb.utils import embedding_functions
 import google.generativeai as genai
@@ -16,21 +26,24 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ----------------------------------------------------------------------------
 # 환경 변수 로드
 # ----------------------------------------------------------------------------
-if os.path.exists("api키.env"):
-    load_dotenv("api키.env")
-else:
-    load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = BASE_DIR
+if not os.path.exists(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md")):
+    DATA_DIR = os.path.join(BASE_DIR, "md파일")
+
+env_path = os.path.join(BASE_DIR, "api키.env")
+load_dotenv(env_path if os.path.exists(env_path) else None)
 
 # 기존에 하드코딩되었던 키들이 .env에 있다고 가정하거나, 없으면 하드코딩 값을 fallback으로 사용합니다.
-NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
-NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "Z3ctnxISEw4WbUOKGxP7")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "B_RyJtcnoJ")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwVBeI1lO0j0SrT_CFwHqJu_txhwG7ORomkc5ex91afg")
 
 # ----------------------------------------------------------------------------
 # 전역 리소스 초기화 (Streamlit Cache 활용)
 # ----------------------------------------------------------------------------
 @st.cache_resource
-def init_resources_v2(gemini_key, naver_id, naver_secret):
+def init_resources(gemini_key, naver_id, naver_secret):
     resources = {}
     
     # 1. Gemini 설정
@@ -40,9 +53,9 @@ def init_resources_v2(gemini_key, naver_id, naver_secret):
     
     # 2. ChromaDB 설정
     try:
-        db_path = "./chroma_db"
+        db_path = os.path.join(BASE_DIR, "chroma_db")
         chroma_client = chromadb.PersistentClient(path=db_path)
-        sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="paraphrase-multilingual-MiniLM-L12-v2")
+        sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
         resources['chroma_collection'] = chroma_client.get_collection(
             name="oceania_knowledge", 
             embedding_function=sentence_transformer_ef
@@ -53,21 +66,14 @@ def init_resources_v2(gemini_key, naver_id, naver_secret):
         
     # 3. 구글 스프레드시트 설정
     try:
-        if os.path.exists('google_creds.json'):
+        credentials_path = os.path.join(BASE_DIR, "google_creds.json")
+        if os.path.exists(credentials_path):
             # gspread 5.0+ 최신 인증 방식 사용
-            gclient = gspread.service_account(filename='google_creds.json')
+            gclient = gspread.service_account(filename=credentials_path)
             resources['gsheet'] = gclient.open("ChatBot_Logs").sheet1
-            print("[성공] Google Sheets 연동 완료 (로컬)!")
-        elif hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-            # Streamlit Cloud의 secrets 사용
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            if "private_key" in creds_dict:
-                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            gclient = gspread.service_account_from_dict(creds_dict)
-            resources['gsheet'] = gclient.open("ChatBot_Logs").sheet1
-            print("[성공] Google Sheets 연동 완료 (Streamlit Cloud Secrets)!")
+            print("[성공] Google Sheets 연동 완료!")
         else:
-            print("[알림] google_creds.json 파일이나 st.secrets 설정이 없습니다.")
+            print("[알림] google_creds.json 파일이 존재하지 않습니다.")
             resources['gsheet'] = None
     except Exception as e:
         print(f"[오류] Google Sheets 초기화 실패: {e}")
@@ -75,7 +81,7 @@ def init_resources_v2(gemini_key, naver_id, naver_secret):
         
     return resources
 
-res = init_resources_v2(GEMINI_API_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
+res = init_resources(GEMINI_API_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
 model = res.get('gemini_model')
 collection = res.get('chroma_collection')
 gsheet = res.get('gsheet')
@@ -85,12 +91,16 @@ gsheet = res.get('gsheet')
 # ----------------------------------------------------------------------------
 
 def log_to_sheet_async(timestamp, student_id, student_name, user_query, bot_response, source):
-    """구글 시트에 로그를 기록하는 함수 (Streamlit Cloud 환경의 안정성을 위해 동기식으로 변경)"""
-    if gsheet:
-        try:
-            gsheet.append_row([timestamp, student_id, student_name, user_query, bot_response, source], value_input_option="RAW")
-        except Exception as e:
-            print(f"시트 기록 실패: {e}")
+    """구글 시트에 로그를 비동기적으로 기록하는 함수"""
+    def log_task():
+        if gsheet:
+            try:
+                gsheet.append_row([timestamp, student_id, student_name, user_query, bot_response, source])
+            except Exception as e:
+                print(f"시트 기록 실패: {e}")
+    
+    thread = threading.Thread(target=log_task)
+    thread.start()
 
 def filter_relevant_contexts(query, contexts):
     """Gemini를 사용하여 검색된 컨텍스트들 중 질문과 실제로 관련 있는 것만 필터링"""
@@ -105,9 +115,9 @@ def filter_relevant_contexts(query, contexts):
             
         context_str = "\n\n".join(context_items)
         
-        prompt = f"""[학생의 질문]과 관련된 정보를 조금이라도 담고 있는 [후보 문서]들의 ID를 모두 골라주세요.
-질문에 대한 직접적인 정답이 없더라도, 질문과 관련된 주제나 배경지식을 설명하고 있다면 관련이 있는 것입니다.
-반면, 질문과 아예 다른 주제를 다루고 있거나 전혀 무관한 경우에만 제외하세요.
+        prompt = f"""[학생의 질문]에 대답하는 데 직접적인 도움이 되는 관련 정보를 담고 있는 [후보 문서]들의 ID를 골라주세요.
+질문에 답하는 데 필요한 핵심 사실이나 설명이 포함되어 있다면 관련이 있는 것입니다.
+반면, 질문과 전혀 무관하거나 단순한 대단원/소단원 제목, 목차 수준의 정보라면 관련이 없으므로 제외해야 합니다.
 
 [학생의 질문]: {query}
 
@@ -147,22 +157,23 @@ def search_hybrid(query):
             documents = results['documents'][0]
             metadatas = results['metadatas'][0]
             
-            # 모든 결과를 후보로 가져오기 (거리 제한 제거)
+            # 유사도 임계값 0.28 적용 (L2 거리 기준, 작을수록 유사함. 임계값을 완화하고 LLM으로 관련성 2차 검증 수행)
             for dist, doc, meta in zip(distances, documents, metadatas):
-                source_name = meta.get('source', '')
-                page = meta.get('page', '')
-                page_str = f" p.{page}" if page else ""
-                
-                if '교과서' in source_name:
-                    display_source = f"교과서 {page_str}".strip()
-                elif '지도서' in source_name:
-                    display_source = f"지도서 {page_str}".strip()
-                else:
-                    continue
+                if dist < 0.28:
+                    source_name = meta.get('source', '')
+                    page = meta.get('page', '')
+                    page_str = f" p.{page}" if page else ""
                     
-                contexts.append({"doc": doc, "source": display_source})
+                    if '교과서' in source_name:
+                        display_source = f"교과서 {page_str}".strip()
+                    elif '지도서' in source_name:
+                        display_source = f"지도서 {page_str}".strip()
+                    else:
+                        continue
+                        
+                    contexts.append({"doc": doc, "source": display_source})
             
-            # LLM을 통한 관련성 검증 적용 (질문과 텍스트가 관련 있는지 확인)
+            # Gemini를 통한 2차 관련성 검증
             if contexts:
                 filtered = filter_relevant_contexts(query, contexts)
                 if filtered:
@@ -222,35 +233,26 @@ def get_system_prompt(section, search_stage):
 
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 제공된 [지식]이 있다면 반드시 그 내용을 기반으로 답변해야 합니다. 이때 답변 텍스트 내(답변 맨 하단 등)에는 절대 '출처'나 '사이트 주소(URL)'를 직접 적지 마세요. (출처 표기는 시스템 UI가 별도로 처리합니다).
+1. 제공된 [지식]이 있다면 반드시 그 내용을 기반으로 답변해야 하며, 답변 맨 끝에 제공된 'Source' 정보를 그대로 활용해 무조건 '[출처: OOO]' 형식으로 기재하세요. (예: [출처: 교과서 p.106], [출처: 네이버 지식백과 - 오세아니아]).
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, 출처 표기 시 페이지 번호를 함께 적어주세요. 단, 텍스트에 페이지 번호가 명시되어 있지 않다면 절대 지어내지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
-4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 자체 지식으로 답변할 때에는 '구글 검색', '출처', '인터넷 주소', 'URL', 'http', 'source' 등을 일반 텍스트로 적지 말고, 대신 답변 맨 마지막에 자신이 참고한 신뢰할 수 있는 웹페이지 URL 주소 1개를 반드시 <source>URL</source> 형식으로 작성해주세요. (예: <source>https://terms.naver.com/...</source>)
-5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요."""
+4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하고, 답변 맨 끝에는 참고할 만한 출처(예: 특정 기관 홈페이지 등)와 인터넷 주소(URL)를 '[출처: OOO (URL)]' 형식으로 기재하세요.
+5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt}"
 
 @st.cache_data
-def get_initial_questions_v2(section):
+def get_initial_questions(section):
     """성취기준을 바탕으로 3개의 탐구 질문 생성"""
     if not model:
         return ["오세아니아의 대표적인 기후는 무엇인가요?", "태평양의 주요 환경 문제는 어떤 것들이 있나요?", "오세아니아 사람들은 어떤 집에 살고 있나요?"]
         
     try:
-        with open("2022_사회과_교육과정_성취기준_오세아니아.md", "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        with open(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md"), "r", encoding="utf-8") as f:
+            content = f.read()
             
-        if "6-1" in section:
-            target_std = "[9사(지리)06-01]"
-        elif "6-2" in section:
-            target_std = "[9사(지리)06-02]"
-        else:
-            target_std = "[9사(지리)06-03]"
-            
-        relevant_content = "\n".join([line.strip() for line in lines if target_std in line])
-            
-        prompt = f"""다음은 중학교 사회과 오세아니아 단원 중 '{section}'의 성취기준 및 관련 내용입니다.
-{relevant_content}
+        prompt = f"""다음은 중학교 사회과 오세아니아 단원의 성취기준입니다.
+{content}
 
 현재 학습 중인 세부 주제는 '{section}' 입니다.
 이 성취기준과 현재 학습 주제를 바탕으로 중학교 1학년 학생이 호기심을 가질 만한 흥미로운 탐구 질문 3가지를 생성해주세요.
@@ -448,17 +450,12 @@ with st.sidebar:
     st.info("선택한 단원에 따라 선생님의 지도 방식이 달라집니다!")
     
     try:
-        with open("2022_사회과_교육과정_성취기준_오세아니아.md", "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            if "6-1" in section:
-                target_std = "[9사(지리)06-01]"
-            elif "6-2" in section:
-                target_std = "[9사(지리)06-02]"
-            else:
-                target_std = "[9사(지리)06-03]"
-            standards = [line.strip() for line in lines if target_std in line and not line.strip().startswith('*')]
+        with open(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md"), "r", encoding="utf-8") as f:
+            standards_content = f.read()
+            standards = re.findall(r'(?ms)^\[9사[^\n]+\].*?(?=^\[9사|^###)', standards_content)
+            standards = [re.sub(r'\s+', ' ', standard).strip() for standard in standards]
             
-        st.markdown("<h4 style='color: #1E6091; margin-bottom: 5px;'>📖 핵심 성취기준</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #1E6091; margin-bottom: 5px;'>📖 교육과정 성취기준</h4>", unsafe_allow_html=True)
         for i, std in enumerate(standards):
             if i % 3 == 0:
                 st.info(std)
@@ -468,22 +465,24 @@ with st.sidebar:
                 st.warning(std)
         
         # 영역별 성취수준 박스 (클릭 시 툴팁처럼 나오는 Popover 활용)
-        with open("영역별_성취수준_오세아니아.md", "r", encoding="utf-8") as f:
+        with open(os.path.join(DATA_DIR, "영역별_성취수준_오세아니아.md"), "r", encoding="utf-8") as f:
             levels_content = f.read()
             
-        levels_content = levels_content[levels_content.find('A수준'):]
+        # 원본은 등급을 'A', 'B'처럼 단독 줄에 표기하므로 화면용 제목으로 변환
+        levels_content = re.sub(r'(?m)^\s*([A-E])\s*$', r'\1수준', levels_content)
+        levels_content = levels_content[levels_content.find('A수준'):].replace('\n', '<br>')
         
-        formatted_levels = levels_content.replace('A수준', '#### 🟢 A 수준') \
-                                         .replace('B수준', '#### 🔵 B 수준') \
-                                         .replace('C수준', '#### 🟡 C 수준') \
-                                         .replace('D수준', '#### 🟠 D 수준') \
-                                         .replace('E수준', '#### 🔴 E 수준') \
-                                         .replace('지식･이해:', '**🧠 지식･이해:**') \
-                                         .replace('과정･기능:', '**⚙️ 과정･기능:**') \
-                                         .replace('가치･태도:', '**❤️ 가치･태도:**')
+        formatted_levels = levels_content.replace('A수준', '<div style="background-color: rgba(46, 204, 113, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #27AE60; margin-top:0; margin-bottom: 10px;">🟢 A 수준</h4>') \
+                                         .replace('B수준', '</div><div style="background-color: rgba(52, 152, 219, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #2980B9; margin-top:0; margin-bottom: 10px;">🔵 B 수준</h4>') \
+                                         .replace('C수준', '</div><div style="background-color: rgba(241, 196, 15, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #F39C12; margin-top:0; margin-bottom: 10px;">🟡 C 수준</h4>') \
+                                         .replace('D수준', '</div><div style="background-color: rgba(230, 126, 34, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #D35400; margin-top:0; margin-bottom: 10px;">🟠 D 수준</h4>') \
+                                         .replace('E수준', '</div><div style="background-color: rgba(231, 76, 60, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #C0392B; margin-top:0; margin-bottom: 10px;">🔴 E 수준</h4>') \
+                                         .replace('지식･이해:', '<b style="color: #333;">🧠 지식･이해:</b>') \
+                                         .replace('과정･기능:', '<br><b style="color: #333;">⚙️ 과정･기능:</b>') \
+                                         .replace('가치･태도:', '<br><b style="color: #333;">❤️ 가치･태도:</b>') + "</div>"
             
-        with st.popover("📊 영역별 성취수준 보기 (A~E)", use_container_width=True):
-            st.markdown(formatted_levels)
+        st.markdown("<h4 style='color: #1E6091; margin: 18px 0 5px;'>📊 영역별 성취수준 (A~E)</h4>", unsafe_allow_html=True)
+        st.markdown(formatted_levels, unsafe_allow_html=True)
             
     except Exception as e:
         print(f"사이드바 UI 로드 오류: {e}")
@@ -497,7 +496,7 @@ if "query_count" not in st.session_state:
 # 단원이 변경되었을 때 초기 질문 및 대화 기록 갱신
 if "current_section" not in st.session_state or st.session_state.current_section != section:
     st.session_state.current_section = section
-    st.session_state.initial_questions = get_initial_questions_v2(section)
+    st.session_state.initial_questions = get_initial_questions(section)
     st.session_state.messages = []
     st.session_state.query_count = 0
     if "followup_questions" in st.session_state:
@@ -587,11 +586,20 @@ if user_input:
                             c['key_sentence'] = extract_key_sentence(c['doc'], bot_answer)
                     elif search_stage == "Gemini":
                         import re
-                        source_match = re.search(r'<source>(.*?)</source>', bot_answer, flags=re.IGNORECASE)
-                        source_url = source_match.group(1).strip() if source_match else ""
-                        bot_answer = re.sub(r'<source>[\s\S]*?</source>', '', bot_answer, flags=re.IGNORECASE).strip()
-                        if "선생님은 사회 수업을 위한 챗봇이에요" not in bot_answer:
-                            contexts = [{"doc": "선생님이 가진 배경지식을 활용하여 작성한 답변입니다.", "source": "제미나이 자체 답변", "link": source_url, "key_sentence": "별도의 외부 문서 검색 없이 선생님의 지식으로 답변을 구성했습니다."}]
+                        match = re.search(r'\[출처:\s*(.*?)\]', bot_answer)
+                        if match:
+                            gemini_source = match.group(1).strip()
+                            bot_answer = bot_answer.replace(match.group(0), "").strip()
+                            
+                            url_match = re.search(r'\((http[s]?://[^\)]+)\)', gemini_source)
+                            link = ""
+                            if url_match:
+                                link = url_match.group(1)
+                                gemini_source = gemini_source.replace(url_match.group(0), "").strip()
+                            
+                            contexts = [{"doc": "선생님이 가진 배경지식을 활용하여 작성한 답변입니다.", "source": f"제미나이 자체 지식 - {gemini_source}", "link": link, "key_sentence": "별도의 외부 문서 검색 없이 선생님의 지식으로 답변을 구성했습니다."}]
+                        elif "선생님은 사회 수업을 위한 챗봇이에요" not in bot_answer:
+                            contexts = [{"doc": "선생님이 가진 배경지식을 활용하여 작성한 답변입니다.", "source": "제미나이 자체 답변", "link": "", "key_sentence": "별도의 외부 문서 검색 없이 선생님의 지식으로 답변을 구성했습니다."}]
                 except Exception as e:
                     bot_answer = f"[오류] 답변 생성 중 문제가 발생했습니다: {e}"
             else:
