@@ -38,6 +38,10 @@ NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "Z3ctnxISEw4WbUOKGxP7")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "B_RyJtcnoJ")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwVBeI1lO0j0SrT_CFwHqJu_txhwG7ORomkc5ex91afg")
 LOCAL_DISTANCE_THRESHOLD = 0.45
+LOCAL_SOURCE_FILES = (
+    "오세아니아_단원_교과서.md",
+    "오세아니아_단원_지도서.md",
+)
 
 # ----------------------------------------------------------------------------
 # 전역 리소스 초기화 (Streamlit Cache 활용)
@@ -164,7 +168,7 @@ def filter_relevant_contexts(query, contexts):
         return contexts
 
 def get_verified_local_contexts(query):
-    """거리 기준을 통과한 교과서·지도서 문서를 우선 반환"""
+    """교과서·지도서 Markdown과 벡터 검색 결과를 함께 사용해 문맥을 반환"""
     if not collection:
         return []
 
@@ -187,7 +191,39 @@ def get_verified_local_contexts(query):
             continue
 
         contexts.append({"doc": doc, "source": display_source, "distance": dist})
-    return contexts
+
+    # 한국어 임베딩 검색이 놓치는 경우에도 원문에 있는 핵심어를 반드시 보강한다.
+    ignored_terms = {
+        "오세아니아", "대표적인", "특징은", "무엇인가요", "알려주세요",
+        "어떤", "대해", "설명해", "궁금해요",
+    }
+    query_terms = [term for term in re.findall(r"[가-힣]{2,}", query) if term not in ignored_terms]
+    direct_contexts = []
+    for filename in LOCAL_SOURCE_FILES:
+        path = os.path.join(DATA_DIR, filename)
+        if not os.path.exists(path):
+            path = os.path.join(BASE_DIR, filename)
+        if not os.path.exists(path):
+            continue
+
+        with open(path, "r", encoding="utf-8") as file:
+            source_text = file.read()
+        source_chunks = re.split(r"(?=^#{1,3} )", source_text, flags=re.MULTILINE)
+        for chunk in source_chunks:
+            matched_terms = [term for term in query_terms if term in chunk]
+            if not chunk.strip() or not matched_terms:
+                continue
+            source_label = "교과서" if "교과서" in filename else "지도서"
+            if not any(c["doc"] == chunk and c["source"].startswith(source_label) for c in contexts):
+                direct_contexts.append({
+                    "doc": chunk.strip(),
+                    "source": source_label,
+                    "distance": 0.0,
+                    "keyword_score": len(matched_terms),
+                })
+
+    direct_contexts.sort(key=lambda context: context["keyword_score"], reverse=True)
+    return direct_contexts + contexts
 
 def search_hybrid(query):
     """3단계 하이브리드 검색 로직"""
@@ -607,8 +643,15 @@ if user_input:
             if model:
                 # rag_pipeline.py 로직 참조하여 프롬프트 구성
                 if contexts:
-                    context_str = "\n\n".join([f"Source: {c['source']}\nContent: {c['doc']}" for c in contexts])
-                    base_prompt = f"다음 지식을 바탕으로 학생의 질문에 답해주세요.\n\n[지식]\n{context_str}\n\n[학생의 질문]\n{user_input}"
+                    context_str = "\n\n".join([f"[로컬 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
+                    base_prompt = f"""아래 [로컬 교과서·지도서 자료]만 근거로 학생의 질문에 답해주세요.
+자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '제공된 교과서·지도서 자료에서 확인되지 않아요.'라고 말해주세요.
+
+[로컬 교과서·지도서 자료]
+{context_str}
+
+[학생의 질문]
+{user_input}"""
                 else:
                     base_prompt = f"[학생의 질문]\n{user_input}"
                 
@@ -691,27 +734,4 @@ if user_input:
                             
                             # 보기는 별도의 색상 박스에 수직 배치
                             formatted_options = options_part.replace('\n', '<br>')
-                            options_box = f"<div style='background-color: #E8F4F8; border: 1px solid #BFE0EC; padding: 15px; border-radius: 10px; margin: 15px 0; color: #1E6091; font-weight: 500; font-size: 15px; line-height: 1.6;'>{formatted_options}</div>"
-                            st.markdown(options_box, unsafe_allow_html=True)
-                            
-                            with st.expander("✅ 정답 및 해설 확인하기"):
-                                st.markdown(answer_part)
-                                
-                            st.session_state.messages.append({
-                                "role": "assistant", 
-                                "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n{options_box}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
-                            })
-                        else:
-                            question_part = q_and_options.replace("[문제]", "").strip()
-                            st.markdown(question_part)
-                            
-                            with st.expander("✅ 정답 및 해설 확인하기"):
-                                st.markdown(answer_part)
-                                
-                            st.session_state.messages.append({
-                                "role": "assistant", 
-                                "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
-                            })
-                    else:
-                        st.markdown(quiz_text)
-                        st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
+                            options_box = f"<div style='background-color: #E8F4F8; border: 1px solid
