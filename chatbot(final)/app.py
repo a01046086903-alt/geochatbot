@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import threading
 import sys
 import urllib.parse
 import urllib.request
@@ -66,16 +65,29 @@ def init_resources(gemini_key, naver_id, naver_secret):
         
     # 3. 구글 스프레드시트 설정
     try:
-        credentials_path = os.path.join(BASE_DIR, "google_creds.json")
-        if os.path.exists(credentials_path):
-            # gspread 5.0+ 최신 인증 방식 사용
+        credentials_path = os.environ.get(
+            "GOOGLE_CREDS_PATH", os.path.join(BASE_DIR, "google_creds.json")
+        )
+        if os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
+            gclient = gspread.service_account_from_dict(
+                json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+            )
+        elif "gcp_service_account" in st.secrets:
+            gclient = gspread.service_account_from_dict(
+                dict(st.secrets["gcp_service_account"])
+            )
+        elif os.path.exists(credentials_path):
             gclient = gspread.service_account(filename=credentials_path)
-            resources['gsheet'] = gclient.open("ChatBot_Logs").sheet1
-            print("[성공] Google Sheets 연동 완료!")
         else:
-            print("[알림] google_creds.json 파일이 존재하지 않습니다.")
-            resources['gsheet'] = None
+            raise FileNotFoundError(
+                "google_creds.json 또는 gcp_service_account 설정을 찾을 수 없습니다."
+            )
+
+        resources['gsheet'] = gclient.open("ChatBot_Logs").sheet1
+        resources['gsheet_error'] = ""
+        print("[성공] Google Sheets 연동 완료!")
     except Exception as e:
+        resources['gsheet_error'] = str(e)
         print(f"[오류] Google Sheets 초기화 실패: {e}")
         resources['gsheet'] = None
         
@@ -85,22 +97,26 @@ res = init_resources(GEMINI_API_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
 model = res.get('gemini_model')
 collection = res.get('chroma_collection')
 gsheet = res.get('gsheet')
+gsheet_error = res.get('gsheet_error', '')
 
 # ----------------------------------------------------------------------------
 # 기능 함수 정의
 # ----------------------------------------------------------------------------
 
-def log_to_sheet_async(timestamp, student_id, student_name, user_query, bot_response, source):
-    """구글 시트에 로그를 비동기적으로 기록하는 함수"""
-    def log_task():
-        if gsheet:
-            try:
-                gsheet.append_row([timestamp, student_id, student_name, user_query, bot_response, source])
-            except Exception as e:
-                print(f"시트 기록 실패: {e}")
-    
-    thread = threading.Thread(target=log_task)
-    thread.start()
+def log_to_sheet(timestamp, student_id, student_name, user_query, bot_response, source):
+    """구글 시트에 로그를 기록하고 성공 여부를 반환"""
+    if not gsheet:
+        print(f"[오류] Google Sheets가 초기화되지 않았습니다: {gsheet_error}")
+        return False
+    try:
+        gsheet.append_row(
+            [timestamp, student_id, student_name, user_query, bot_response, source],
+            value_input_option="USER_ENTERED",
+        )
+        return True
+    except Exception as e:
+        print(f"[오류] 시트 기록 실패: {e}")
+        return False
 
 def filter_relevant_contexts(query, contexts):
     """Gemini를 사용하여 검색된 컨텍스트들 중 질문과 실제로 관련 있는 것만 필터링"""
@@ -641,7 +657,7 @@ if user_input:
             
             # 4. 구글 시트 로깅 (비동기)
             log_source = search_stage if search_stage == "Gemini" else contexts[0]["source"] if contexts else "Unknown"
-            log_to_sheet_async(
+            log_to_sheet(
                 timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 student_id=st.session_state.student_id,
                 student_name=st.session_state.student_name,
@@ -701,3 +717,4 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
+
