@@ -146,45 +146,50 @@ def filter_relevant_contexts(query, contexts):
         print(f"컨텍스트 필터링 오류: {e}")
         return contexts
 
+def get_verified_local_contexts(query):
+    """거리 기준을 통과한 교과서·지도서 문서를 우선 반환"""
+    if not collection:
+        return []
+
+    results = collection.query(query_texts=[query], n_results=8)
+    contexts = []
+    for dist, doc, meta in zip(
+        results['distances'][0], results['documents'][0], results['metadatas'][0]
+    ):
+        if dist >= 0.55:
+            continue
+
+        source_name = meta.get('source', '')
+        page = meta.get('page', '')
+        page_str = f" p.{page}" if page else ""
+        if '교과서' in source_name:
+            display_source = f"교과서{page_str}"
+        elif '지도서' in source_name:
+            display_source = f"지도서{page_str}"
+        else:
+            continue
+
+        contexts.append({"doc": doc, "source": display_source, "distance": dist})
+    return contexts
+
 def search_hybrid(query):
     """3단계 하이브리드 검색 로직"""
     # 1단계: 로컬 교과서/지도서 검색 (ChromaDB)
-    if collection:
-        try:
-            results = collection.query(query_texts=[query], n_results=3)
-            contexts = []
-            distances = results['distances'][0]
-            documents = results['documents'][0]
-            metadatas = results['metadatas'][0]
-            
-            # 유사도 임계값 0.28 적용 (L2 거리 기준, 작을수록 유사함. 임계값을 완화하고 LLM으로 관련성 2차 검증 수행)
-            for dist, doc, meta in zip(distances, documents, metadatas):
-                if dist < 0.28:
-                    source_name = meta.get('source', '')
-                    page = meta.get('page', '')
-                    page_str = f" p.{page}" if page else ""
-                    
-                    if '교과서' in source_name:
-                        display_source = f"교과서 {page_str}".strip()
-                    elif '지도서' in source_name:
-                        display_source = f"지도서 {page_str}".strip()
-                    else:
-                        continue
-                        
-                    contexts.append({"doc": doc, "source": display_source})
-            
-            # Gemini를 통한 2차 관련성 검증
-            if contexts:
-                filtered = filter_relevant_contexts(query, contexts)
-                if filtered:
-                    return filtered, "Local"
-        except Exception as e:
-            print(f"ChromaDB 검색 오류: {e}")
+    try:
+        contexts = get_verified_local_contexts(query)
+        if contexts:
+            filtered = filter_relevant_contexts(query, contexts)
+            if filtered:
+                return filtered, "Local"
+            if contexts[0]["distance"] < 0.28:
+                return contexts[:5], "Local"
+    except Exception as e:
+        print(f"ChromaDB 검색 오류: {e}")
 
     # 2단계: 네이버 지식백과 API 검색 (Fallback 1)
     if NAVER_CLIENT_ID and NAVER_CLIENT_SECRET:
         encText = urllib.parse.quote(query)
-        url = "https://openapi.naver.com/v1/search/encyc.json?query=" + encText + "&display=3"
+        url = "https://openapi.naver.com/v1/search/encyc.json?query=" + encText + "&display=5"
         req = urllib.request.Request(url)
         req.add_header("X-Naver-Client-Id", NAVER_CLIENT_ID)
         req.add_header("X-Naver-Client-Secret", NAVER_CLIENT_SECRET)
