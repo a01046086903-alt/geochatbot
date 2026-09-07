@@ -165,32 +165,33 @@ def filter_relevant_contexts(query, contexts):
         return [contexts[i] for i in relevant_indices]
     except Exception as e:
         print(f"컨텍스트 필터링 오류: {e}")
-        return contexts
+        return []
 
 def get_verified_local_contexts(query):
     """교과서·지도서 Markdown과 벡터 검색 결과를 함께 사용해 문맥을 반환"""
-    if not collection:
-        return []
-
-    results = collection.query(query_texts=[query], n_results=8)
     contexts = []
-    for dist, doc, meta in zip(
-        results['distances'][0], results['documents'][0], results['metadatas'][0]
-    ):
-        if dist >= LOCAL_DISTANCE_THRESHOLD:
-            continue
+    if collection:
+        try:
+            results = collection.query(query_texts=[query], n_results=8)
+            for dist, doc, meta in zip(
+                results['distances'][0], results['documents'][0], results['metadatas'][0]
+            ):
+                if dist >= LOCAL_DISTANCE_THRESHOLD:
+                    continue
 
-        source_name = meta.get('source', '')
-        page = meta.get('page', '')
-        page_str = f" p.{page}" if page else ""
-        if '교과서' in source_name:
-            display_source = f"오세아니아_단원_교과서.md{page_str}"
-        elif '지도서' in source_name:
-            display_source = f"오세아니아_단원_지도서.md{page_str}"
-        else:
-            continue
+                source_name = meta.get('source', '')
+                page = meta.get('page', '')
+                page_str = f" p.{page}" if page else ""
+                if '교과서' in source_name:
+                    display_source = f"오세아니아_단원_교과서.md{page_str}"
+                elif '지도서' in source_name:
+                    display_source = f"오세아니아_단원_지도서.md{page_str}"
+                else:
+                    continue
 
-        contexts.append({"doc": doc, "source": display_source, "distance": dist})
+                contexts.append({"doc": doc, "source": display_source, "distance": dist})
+        except Exception as e:
+            print(f"벡터 DB 검색 오류: {e}")
 
     # 한국어 임베딩 검색이 놓치는 경우에도 원문에 있는 핵심어를 반드시 보강한다.
     ignored_terms = {
@@ -224,8 +225,13 @@ def get_verified_local_contexts(query):
                     "keyword_score": len(matched_terms),
                 })
 
-    direct_contexts.sort(key=lambda context: context["keyword_score"], reverse=True)
-    return direct_contexts + contexts
+    candidates = direct_contexts + contexts
+    if not candidates:
+        return []
+
+    # 거리나 단어 일치만으로는 엉뚱한 문서가 1단계로 확정될 수 있으므로
+    # 질문에 실제 답을 제공하는 문서인지 한 번 더 확인한다.
+    return filter_relevant_contexts(query, candidates)
 
 def search_hybrid(query):
     """3단계 하이브리드 검색 로직"""
@@ -233,7 +239,6 @@ def search_hybrid(query):
     try:
         contexts = get_verified_local_contexts(query)
         if contexts:
-            # 벡터 거리로 검증된 로컬 자료는 LLM 필터가 제거하지 않도록 직접 사용한다.
             return contexts[:5], "Local"
     except Exception as e:
         print(f"ChromaDB 검색 오류: {e}")
@@ -288,15 +293,22 @@ def get_system_prompt(section, search_stage):
         else: # 6-3. 극지방의 중요성과 지역 개발
             section_prompt = "주요 역할: 이 단원에서는 '역할극 대본 보조 및 논리 검증 챗봇'으로 활동합니다. 극지방 관련 역할극 대본을 만들 때 상황 설정과 대사 작성을 적극적으로 돕고, 학생이 작성한 주장하는 글을 분석하여 논리적인 모순이나 근거의 부족함이 없는지 예리하게 검증하고 피드백을 제공하세요."
 
+    if search_stage == "Local":
+        knowledge_source = "교과서·지도서"
+    elif search_stage == "Naver":
+        knowledge_source = "네이버 지식백과 검색 결과"
+    else:
+        knowledge_source = "제공된 검색 자료 없음"
+
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처 표기는 시스템이 실제 검색 결과를 바탕으로 답변 뒤에 추가하므로, 답변 안에서 출처명이나 URL을 만들거나 추정하지 마세요.
+1. 현재 답변의 근거 자료는 [지식 출처: {knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처 표기는 시스템이 실제 검색 결과를 바탕으로 답변 뒤에 추가하므로, 답변 안에서 출처명이나 URL을 만들거나 추정하지 마세요.
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, 출처 표기 시 페이지 번호를 함께 적어주세요. 단, 텍스트에 페이지 번호가 명시되어 있지 않다면 절대 지어내지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
 4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
 5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
 
-    return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt}"
+    return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
 def attach_verified_sources(answer, contexts, search_stage):
     """모델이 만든 출처를 버리고 실제 검색 결과의 출처만 답변에 추가"""
@@ -678,11 +690,12 @@ if user_input:
             if model:
                 # rag_pipeline.py 로직 참조하여 프롬프트 구성
                 if contexts:
-                    context_str = "\n\n".join([f"[로컬 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
-                    base_prompt = f"""아래 [로컬 교과서·지도서 자료]만 근거로 학생의 질문에 답해주세요.
-자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '제공된 교과서·지도서 자료에서 확인되지 않아요.'라고 말해주세요.
+                    context_str = "\n\n".join([f"[검색 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
+                    source_name = "교과서·지도서" if search_stage == "Local" else "네이버 지식백과"
+                    base_prompt = f"""아래 [{source_name} 검색 자료]만 근거로 학생의 질문에 답해주세요.
+자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '검색된 자료에서 확인되지 않아요.'라고 말해주세요.
 
-[로컬 교과서·지도서 자료]
+[{source_name} 검색 자료]
 {context_str}
 
 [학생의 질문]
