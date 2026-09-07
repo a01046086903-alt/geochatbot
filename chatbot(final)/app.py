@@ -464,7 +464,7 @@ with st.sidebar:
             else:
                 st.warning(std)
         
-        # 영역별 성취수준 박스 (클릭 시 툴팁처럼 나오는 Popover 활용)
+        # 영역별 성취수준은 클릭 시 내용을 확인할 수 있는 팝오버로 표시
         with open(os.path.join(DATA_DIR, "영역별_성취수준_오세아니아.md"), "r", encoding="utf-8") as f:
             levels_content = f.read()
             
@@ -481,8 +481,9 @@ with st.sidebar:
                                          .replace('과정･기능:', '<br><b style="color: #333;">⚙️ 과정･기능:</b>') \
                                          .replace('가치･태도:', '<br><b style="color: #333;">❤️ 가치･태도:</b>') + "</div>"
             
-        st.markdown("<h4 style='color: #1E6091; margin: 18px 0 5px;'>📊 영역별 성취수준 (A~E)</h4>", unsafe_allow_html=True)
-        st.markdown(formatted_levels, unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #1E6091; margin: 18px 0 5px;'>📊 영역별 성취수준</h4>", unsafe_allow_html=True)
+        with st.popover("A~E 수준 확인하기", use_container_width=True):
+            st.markdown(formatted_levels, unsafe_allow_html=True)
             
     except Exception as e:
         print(f"사이드바 UI 로드 오류: {e}")
