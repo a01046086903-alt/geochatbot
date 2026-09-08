@@ -311,21 +311,17 @@ def get_system_prompt(section, search_stage):
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
 def attach_verified_sources(answer, contexts, search_stage):
-    """모델이 만든 출처를 버리고 실제 검색 결과의 출처만 답변에 추가"""
+    """답변 본문에 포함된 출처 표기를 제거한다."""
     answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
     answer = re.sub(r"(?im)^\s*(?:\*\*)?출처\s*:\s*.*$", "", answer).strip()
+    answer = re.sub(
+        r"\s*[\(（][^\)）]*(?:\.md|p\.?\s*\d+|\d+쪽)[^\)）]*[\)）]",
+        "",
+        answer,
+        flags=re.IGNORECASE,
+    ).strip()
     answer = re.sub(r"https?://\S+", "", answer).strip()
-    if "선생님은 사회 수업을 위한 챗봇이에요" in answer:
-        return answer
-    if contexts:
-        sources = []
-        for context in contexts:
-            source = render_context_source(context)
-            if source and source not in sources:
-                sources.append(source)
-        if sources:
-            return f"{answer}\n\n[출처: {'; '.join(sources)}]"
-    return f"{answer}\n\n[출처: 검증된 외부 출처 없음 - Gemini 자체 지식]"
+    return answer
 
 def render_context_source(context):
     """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
