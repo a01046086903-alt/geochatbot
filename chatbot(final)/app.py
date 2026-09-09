@@ -49,12 +49,12 @@ LOCAL_SOURCE_FILES = (
 @st.cache_resource
 def init_resources(gemini_key, naver_id, naver_secret):
     resources = {}
-
+    
     # 1. Gemini 설정
     if gemini_key:
         genai.configure(api_key=gemini_key)
         resources['gemini_model'] = genai.GenerativeModel('gemini-2.5-flash')
-
+    
     # 2. ChromaDB 설정
     try:
         db_path = os.path.join(BASE_DIR, "chroma_db")
@@ -67,7 +67,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
     except Exception as e:
         print(f"ChromaDB 초기화 오류: {e}")
         resources['chroma_collection'] = None
-
+        
     # 3. 구글 스프레드시트 설정
     try:
         credentials_path = os.environ.get(
@@ -95,7 +95,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
         resources['gsheet_error'] = str(e)
         print(f"[오류] Google Sheets 초기화 실패: {e}")
         resources['gsheet'] = None
-
+        
     return resources
 
 res = init_resources(GEMINI_API_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
@@ -127,15 +127,15 @@ def filter_relevant_contexts(query, contexts):
     """Gemini를 사용하여 검색된 컨텍스트들 중 질문과 실제로 관련 있는 것만 필터링"""
     if not model or not contexts:
         return contexts
-
+        
     try:
         # 각 컨텍스트에 임시 ID 부여하여 전달
         context_items = []
         for idx, c in enumerate(contexts):
             context_items.append(f"ID: {idx}\n출처: {c['source']}\n내용: {c['doc']}")
-
+            
         context_str = "\n\n".join(context_items)
-
+        
         prompt = f"""[학생의 질문]에 대답하는 데 직접적인 도움이 되는 관련 정보를 담고 있는 [후보 문서]들의 ID를 골라주세요.
 질문에 답하는 데 필요한 핵심 사실이나 설명이 포함되어 있다면 관련이 있는 것입니다.
 반면, 질문과 전혀 무관하거나 단순한 대단원/소단원 제목, 목차 수준의 정보라면 관련이 없으므로 제외해야 합니다.
@@ -148,20 +148,20 @@ def filter_relevant_contexts(query, contexts):
 출력 형식: 관련이 있는 문서의 ID들을 쉼표로 구분하여 출력하세요. (예: 0, 2)
 만약 모든 문서가 질문과 전혀 관련이 없고 엉뚱한 내용이라면 반드시 'NONE'이라고만 출력하세요.
 다른 설명은 절대 하지 마세요."""
-
+        
         response = model.generate_content(prompt)
         result = response.text.strip().upper()
-
+        
         if "NONE" in result:
             return []
-
+            
         relevant_indices = []
         for word in result.replace(",", " ").split():
             if word.isdigit():
                 idx = int(word)
                 if 0 <= idx < len(contexts):
                     relevant_indices.append(idx)
-
+                    
         return [contexts[i] for i in relevant_indices]
     except Exception as e:
         print(f"컨텍스트 필터링 오류: {e}")
@@ -250,7 +250,7 @@ def search_hybrid(query):
         req = urllib.request.Request(url)
         req.add_header("X-Naver-Client-Id", NAVER_CLIENT_ID)
         req.add_header("X-Naver-Client-Secret", NAVER_CLIENT_SECRET)
-
+        
         try:
             response = urllib.request.urlopen(req)
             if response.getcode() == 200:
@@ -262,7 +262,7 @@ def search_hybrid(query):
                     title = item.get("title", "").replace("<b>", "").replace("</b>", "")
                     link = item.get("link", "")
                     contexts.append({"doc": f"{title}: {desc}", "source": f"네이버 지식백과 - {title}", "link": link})
-
+                
                 # 네이버 검색 결과도 Gemini를 통한 관련성 검증 적용
                 if contexts:
                     filtered = filter_relevant_contexts(query, contexts)
@@ -276,7 +276,7 @@ def search_hybrid(query):
 
 def get_system_prompt(section, search_stage):
     """단원 및 검색 단계에 따른 시스템 프롬프트 반환 (rag_pipeline.py 기반)"""
-
+    
     # 기본 페르소나 설정
     base_persona = """당신은 중학교 1학년 학생들에게 다정하고 친근하게 사회를 가르치는 '사회 선생님'입니다.
 학생들을 존중하고 따뜻하게 격려하는 '~해요', '~알아볼까요?' 말투를 사용하세요. 
@@ -312,13 +312,7 @@ def get_system_prompt(section, search_stage):
 
 def attach_verified_sources(answer, contexts, search_stage):
     """답변 본문에 포함된 출처 표기를 제거한다."""
-    """답변 본문에 포함된 출처 표기와 검색 자료 메타데이터를 제거한다."""
     answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
-    answer = re.sub(
-        r"(?im)^\s*(?:[-*•]\s*)?\[검색 자료\s*\d+\]\s*출처:\s*.*$",
-        "",
-        answer,
-    ).strip()
     answer = re.sub(
         r"(?im)\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*\.md(?:\s+p\.?\s*\d+(?:~\d+)?)?[^\n]*",
         "",
@@ -369,11 +363,11 @@ def get_initial_questions(section):
     """성취기준을 바탕으로 3개의 탐구 질문 생성"""
     if not model:
         return ["오세아니아의 대표적인 기후는 무엇인가요?", "태평양의 주요 환경 문제는 어떤 것들이 있나요?", "오세아니아 사람들은 어떤 집에 살고 있나요?"]
-
+        
     try:
         with open(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md"), "r", encoding="utf-8") as f:
             content = f.read()
-
+            
         prompt = f"""다음은 중학교 사회과 오세아니아 단원의 성취기준입니다.
 {content}
 
@@ -462,7 +456,7 @@ def generate_quiz(chat_log):
     """대화 로그를 바탕으로 퀴즈 생성"""
     if not model:
         return None
-
+        
     prompt = f"""다음은 선생님과 학생의 대화 내용입니다:
 {chat_log}
 
@@ -541,7 +535,7 @@ if "student_name" not in st.session_state:
 # 로그인 안 한 경우 로그인 화면 표시 후 로직 중단
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
-
+    
     # 태블릿/PC 등 넓은 화면에서 폼이 너무 길어지지 않도록 중앙 배치 (1:2:1 비율)
     spacer1, main_col, spacer2 = st.columns([1, 2, 1])
     with main_col:
@@ -553,7 +547,7 @@ if not st.session_state.logged_in:
                 sid = st.text_input("학번 (예: 10101)")
             with col2:
                 sname = st.text_input("이름 (예: 홍길동)")
-
+            
             st.markdown("<br>", unsafe_allow_html=True)
             submitted = st.form_submit_button("입장하기", use_container_width=True, type="primary")
             if submitted:
@@ -575,13 +569,13 @@ with st.sidebar:
               "6-3. 극지방의 중요성과 지역 개발"))
     st.markdown("---")
     st.info("선택한 단원에 따라 선생님의 지도 방식이 달라집니다!")
-
+    
     try:
         with open(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md"), "r", encoding="utf-8") as f:
             standards_content = f.read()
             standards = re.findall(r'(?ms)^\[9사[^\n]+\].*?(?=^\[9사|^###)', standards_content)
             standards = [re.sub(r'\s+', ' ', standard).strip() for standard in standards]
-
+            
         st.markdown("<h4 style='color: #1E6091; margin-bottom: 5px;'>📖 교육과정 성취기준</h4>", unsafe_allow_html=True)
         for i, std in enumerate(standards):
             if i % 3 == 0:
@@ -590,15 +584,15 @@ with st.sidebar:
                 st.success(std)
             else:
                 st.warning(std)
-
+        
         # 영역별 성취수준은 클릭 시 내용을 확인할 수 있는 팝오버로 표시
         with open(os.path.join(DATA_DIR, "영역별_성취수준_오세아니아.md"), "r", encoding="utf-8") as f:
             levels_content = f.read()
-
+            
         # 원본은 등급을 'A', 'B'처럼 단독 줄에 표기하므로 화면용 제목으로 변환
         levels_content = re.sub(r'(?m)^\s*([A-E])\s*$', r'\1수준', levels_content)
         levels_content = levels_content[levels_content.find('A수준'):].replace('\n', '<br>')
-
+        
         formatted_levels = levels_content.replace('A수준', '<div style="background-color: rgba(46, 204, 113, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #27AE60; margin-top:0; margin-bottom: 10px;">🟢 A 수준</h4>') \
                                          .replace('B수준', '</div><div style="background-color: rgba(52, 152, 219, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #2980B9; margin-top:0; margin-bottom: 10px;">🔵 B 수준</h4>') \
                                          .replace('C수준', '</div><div style="background-color: rgba(241, 196, 15, 0.15); padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px;"><h4 style="color: #F39C12; margin-top:0; margin-bottom: 10px;">🟡 C 수준</h4>') \
@@ -607,11 +601,11 @@ with st.sidebar:
                                          .replace('지식･이해:', '<b style="color: #333;">🧠 지식･이해:</b>') \
                                          .replace('과정･기능:', '<br><b style="color: #333;">⚙️ 과정･기능:</b>') \
                                          .replace('가치･태도:', '<br><b style="color: #333;">❤️ 가치･태도:</b>') + "</div>"
-
+            
         st.markdown("<h4 style='color: #1E6091; margin: 18px 0 5px;'>📊 영역별 성취수준</h4>", unsafe_allow_html=True)
         with st.popover("A~E 수준 확인하기", use_container_width=True):
             st.markdown(formatted_levels, unsafe_allow_html=True)
-
+            
     except Exception as e:
         print(f"사이드바 UI 로드 오류: {e}")
 
@@ -639,11 +633,11 @@ has_new_input = bool(st.session_state.get('chat_input_val') or st.session_state.
 if not st.session_state.messages and not has_new_input:
     st.markdown("### 💡 이런 질문을 해보는 건 어떨까요?")
     st.markdown("<p style='font-size: 14px; color: gray;'>질문 버튼을 클릭하면 바로 물어볼 수 있어요!</p>", unsafe_allow_html=True)
-
+    
     cols = st.columns(3)
     # 버튼 자체에 스타일을 주기 위해 Streamlit 버튼 타입을 활용
     btn_types = ["primary", "secondary", "primary"]
-
+    
     for i, q in enumerate(st.session_state.initial_questions):
         with cols[i]:
             if st.button(q, key=f"btn_{i}", type=btn_types[i % 3], use_container_width=True):
@@ -664,12 +658,12 @@ for idx, msg in enumerate(st.session_state.messages):
                         if c.get("link"):
                             st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
                         st.markdown("---")
-
+        
         # 마지막 메시지가 assistant 이고 현재 새로운 질문 입력이 없을 때만 출력
         if idx == len(st.session_state.messages) - 1 and msg["role"] == "assistant" and not has_new_input:
             # 다시 설명 듣기 버튼 렌더링 (후속 질문보다 먼저)
             render_feedback_buttons(idx)
-
+            
             if "followup_questions" in st.session_state:
                 render_followup_questions(st.session_state.followup_questions, idx)
 
@@ -686,20 +680,19 @@ if user_input:
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.query_count += 1
-
+    
     # 2. 3단계 하이브리드 검색 실행
     contexts, search_stage = search_hybrid(user_input)
-
+    
     # 3. 답변 생성
     with st.chat_message("assistant"):
         with st.spinner("선생님이 생각 중이에요..."):
             system_prompt = get_system_prompt(section, search_stage)
-
+            
             if model:
                 # rag_pipeline.py 로직 참조하여 프롬프트 구성
                 if contexts:
                     context_str = "\n\n".join([f"[검색 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
-                    context_str = "\n\n".join([c['doc'] for c in contexts])
                     source_name = "교과서·지도서" if search_stage == "Local" else "네이버 지식백과"
                     base_prompt = f"""아래 [{source_name} 검색 자료]만 근거로 학생의 질문에 답해주세요.
 자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '검색된 자료에서 확인되지 않아요.'라고 말해주세요.
@@ -711,9 +704,9 @@ if user_input:
 {user_input}"""
                 else:
                     base_prompt = f"[학생의 질문]\n{user_input}"
-
+                
                 full_prompt = f"{system_prompt}\n\n{base_prompt}"
-
+                
                 try:
                     response = model.generate_content(full_prompt)
                     bot_answer = attach_verified_sources(response.text, contexts, search_stage)
@@ -725,9 +718,9 @@ if user_input:
                     bot_answer = f"[오류] 답변 생성 중 문제가 발생했습니다: {e}"
             else:
                 bot_answer = "[오류] AI 모델이 초기화되지 않았습니다."
-
+            
             st.markdown(bot_answer)
-
+            
             # 출처보기 Expander
             if contexts:
                 with st.expander("🔍 참고한 핵심 내용 보기"):
@@ -737,22 +730,22 @@ if user_input:
                         if c.get("link"):
                             st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
                         st.markdown("---")
-
+            
             st.session_state.messages.append({
                 "role": "assistant", 
                 "content": bot_answer,
                 "contexts": contexts
             })
-
+            
             # 후속 질문 생성 및 저장
             fq = get_followup_questions(user_input, bot_answer)
             st.session_state.followup_questions = fq
-
+            
             # 답변 재요청 버튼 렌더링 (후속 질문보다 먼저)
             render_feedback_buttons(len(st.session_state.messages) - 1)
-
+            
             render_followup_questions(fq, len(st.session_state.messages) - 1)
-
+            
             # 4. 구글 시트 로깅 (비동기)
             log_source = search_stage if search_stage == "Gemini" else contexts[0]["source"] if contexts else "Unknown"
             log_to_sheet(
@@ -763,7 +756,7 @@ if user_input:
                 bot_response=bot_answer,
                 source=log_source
             )
-
+            
     # 5. 동적 퀴즈 생성 로직 (3회 질문마다)
     if st.session_state.query_count > 0 and st.session_state.query_count % 3 == 0:
         with st.chat_message("assistant"):
@@ -774,29 +767,29 @@ if user_input:
                 for m in st.session_state.messages[-6:]:
                     role = "학생" if m["role"] == "user" else "선생님"
                     recent_logs += f"{role}: {m['content']}\n"
-
+                
                 quiz_text = generate_quiz(recent_logs)
                 if quiz_text:
                     if "[정답 및 해설]" in quiz_text:
                         parts = quiz_text.split("[정답 및 해설]")
                         q_and_options = parts[0]
                         answer_part = parts[1].strip()
-
+                        
                         if "[보기]" in q_and_options:
                             q_parts = q_and_options.split("[보기]")
                             question_part = q_parts[0].replace("[문제]", "").strip()
                             options_part = q_parts[1].strip()
-
+                            
                             st.markdown(question_part)
-
+                            
                             # 보기는 별도의 색상 박스에 수직 배치
                             formatted_options = options_part.replace('\n', '<br>')
                             options_box = f"<div style='background-color: #E8F4F8; border: 1px solid #BFE0EC; padding: 15px; border-radius: 10px; margin: 15px 0; color: #1E6091; font-weight: 500; font-size: 15px; line-height: 1.6;'>{formatted_options}</div>"
                             st.markdown(options_box, unsafe_allow_html=True)
-
+                            
                             with st.expander("✅ 정답 및 해설 확인하기"):
                                 st.markdown(answer_part)
-
+                                
                             st.session_state.messages.append({
                                 "role": "assistant", 
                                 "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n{options_box}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
@@ -804,10 +797,10 @@ if user_input:
                         else:
                             question_part = q_and_options.replace("[문제]", "").strip()
                             st.markdown(question_part)
-
+                            
                             with st.expander("✅ 정답 및 해설 확인하기"):
                                 st.markdown(answer_part)
-
+                                
                             st.session_state.messages.append({
                                 "role": "assistant", 
                                 "content": f"### 📝 복습 퀴즈 타임!\n\n{question_part}\n\n<details><summary>✅ 정답 및 해설 확인하기</summary>\n\n{answer_part}\n</details>"
