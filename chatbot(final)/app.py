@@ -654,16 +654,7 @@ if not st.session_state.messages and not has_new_input:
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"], unsafe_allow_html=True)
-        if msg["role"] == "assistant" and not msg["content"].startswith("### 📝 복습 퀴즈 타임!"):
-            if msg.get("contexts"):
-                with st.expander("🔍 참고한 핵심 내용 보기"):
-                    for c in msg["contexts"]:
-                        key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
-                        if c.get("link"):
-                            st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
-                        st.markdown("---")
-        
+
         # 마지막 메시지가 assistant 이고 현재 새로운 질문 입력이 없을 때만 출력
         if idx == len(st.session_state.messages) - 1 and msg["role"] == "assistant" and not has_new_input:
             # 다시 설명 듣기 버튼 렌더링 (후속 질문보다 먼저)
@@ -725,17 +716,7 @@ if user_input:
                 bot_answer = "[오류] AI 모델이 초기화되지 않았습니다."
             
             st.markdown(bot_answer)
-            
-            # 출처보기 Expander
-            if contexts:
-                with st.expander("🔍 참고한 핵심 내용 보기"):
-                    for c in contexts:
-                        key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
-                        if c.get("link"):
-                            st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
-                        st.markdown("---")
-            
+
             st.session_state.messages.append({
                 "role": "assistant", 
                 "content": bot_answer,
