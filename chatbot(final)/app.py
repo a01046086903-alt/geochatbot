@@ -311,8 +311,13 @@ def get_system_prompt(section, search_stage):
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
 def attach_verified_sources(answer, contexts, search_stage):
-    """답변 본문에 포함된 출처 표기를 제거한다."""
+    """답변 본문에 포함된 출처 표기와 검색 자료 메타데이터를 제거한다."""
     answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
+    answer = re.sub(
+        r"(?im)^\s*(?:[-*•]\s*)?\[검색 자료\s*\d+\]\s*출처:\s*.*$",
+        "",
+        answer,
+    ).strip()
     answer = re.sub(
         r"(?im)\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*\.md(?:\s+p\.?\s*\d+(?:~\d+)?)?[^\n]*",
         "",
@@ -692,7 +697,7 @@ if user_input:
             if model:
                 # rag_pipeline.py 로직 참조하여 프롬프트 구성
                 if contexts:
-                    context_str = "\n\n".join([f"[검색 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
+                    context_str = "\n\n".join([c['doc'] for c in contexts])
                     source_name = "교과서·지도서" if search_stage == "Local" else "네이버 지식백과"
                     base_prompt = f"""아래 [{source_name} 검색 자료]만 근거로 학생의 질문에 답해주세요.
 자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '검색된 자료에서 확인되지 않아요.'라고 말해주세요.
