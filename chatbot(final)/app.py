@@ -136,16 +136,17 @@ def filter_relevant_contexts(query, contexts):
             
         context_str = "\n\n".join(context_items)
         
-        prompt = f"""[학생의 질문]에 대해 완벽하게 대답할 수 있는 '구체적인 정답이나 핵심 정보'가 실제로 들어있는 [후보 문서]들의 ID만 골라주세요.
-단순히 질문과 관련된 주제(키워드)를 다루고 있더라도, 질문에 대한 명확한 정답이나 충분한 설명이 그 문서 안에 없다면 절대 고르면 안 됩니다.
+        prompt = f"""[학생의 질문]에 대해 대답할 수 있는 '구체적인 정답이나 결정적인 단서'가 실제로 들어있는 [후보 문서]들의 ID만 골라주세요.
+단순히 질문과 동일한 단어만 포함하고 있거나 주제만 같을 뿐, 질문이 요구하는 정답을 유추할 수 없는 문서는 절대 고르면 안 됩니다.
+반면, 질문의 정답에 해당하는 핵심 내용이나 힌트가 포함되어 있다면 선택해야 합니다.
 
 [학생의 질문]: {query}
 
 [후보 문서 목록]:
 {context_str}
 
-출력 형식: 질문에 대한 정답을 확실하게 도출할 수 있는 문서의 ID들을 쉼표로 구분하여 출력하세요. (예: 0, 2)
-만약 어떤 문서로도 질문에 대한 명확한 정답을 낼 수 없다면 반드시 'NONE'이라고만 출력하세요.
+출력 형식: 질문에 대한 정답이나 단서를 도출할 수 있는 문서의 ID들을 쉼표로 구분하여 출력하세요. (예: 0, 2)
+만약 어떤 문서로도 질문에 대한 정답을 전혀 낼 수 없다면 반드시 'NONE'이라고만 출력하세요.
 다른 설명은 절대 하지 마세요."""
         
         response = model.generate_content(prompt)
@@ -256,9 +257,10 @@ def search_hybrid(query):
                 data = json.loads(response.read().decode('utf-8'))
                 items = data.get("items", [])
                 contexts = []
+                import html
                 for item in items:
-                    desc = item.get("description", "").replace("<b>", "").replace("</b>", "")
-                    title = item.get("title", "").replace("<b>", "").replace("</b>", "")
+                    desc = html.unescape(item.get("description", "")).replace("<b>", "").replace("</b>", "")
+                    title = html.unescape(item.get("title", "")).replace("<b>", "").replace("</b>", "")
                     link = item.get("link", "")
                     contexts.append({"doc": f"{title}: {desc}", "source": f"네이버 지식백과 - {title}", "link": link})
                 
@@ -304,8 +306,8 @@ def get_system_prompt(section, search_stage):
 1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 시스템이 하단에 자동으로 표시하므로, 답변 본문에는 어떠한 출처 표기나 참고 자료 언급도 절대 하지 마세요. '참고한 핵심 내용 보기'라는 문구도 생성하면 안 됩니다.
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있어도 답변 본문에는 절대 적지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
-4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
-5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
+4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식을 극도로 신중하게 사용하여 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 확실하지 않거나 교과 수준을 넘어서는 내용은 절대 지어내지 말고 "선생님도 그 부분은 더 찾아봐야 할 것 같아요"라고 솔직하게 답변하세요.
+5. [필수 거절 제약] 학생이 중학교 사회 교과 및 현재 학습 단원과 상관없는 질문(예: 수학, 영어, 사적인 질문, 게임, 타 교과 내용 등)을 할 경우에는 절대 정답이나 지식을 제공하지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 단호하고 정중하게 거절한 뒤, 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (안내 문구나 출처 표기 금지)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
@@ -695,8 +697,9 @@ if user_input:
                 if contexts:
                     context_str = "\n\n".join([f"[검색 자료 {i + 1}] 출처: {c['source']}\n{c['doc']}" for i, c in enumerate(contexts)])
                     source_name = "교과서·지도서" if search_stage == "Local" else "네이버 지식백과"
-                    base_prompt = f"""아래 [{source_name} 검색 자료]만 근거로 학생의 질문에 답해주세요.
-자료에 없는 내용은 추가하지 말고, 자료에서 답을 찾을 수 없으면 '검색된 자료에서 확인되지 않아요.'라고 말해주세요.
+                    base_prompt = f"""아래 [{source_name} 검색 자료]의 핵심 내용이나 단서를 바탕으로 학생의 질문에 자연스럽게 답해주세요.
+자료에 없는 완전히 새로운 허구의 내용을 지어내지 말고, 자료의 내용을 바탕으로 중학교 1학년 수준에 맞게 설명해주세요.
+도저히 자료의 내용만으로는 질문과 연관 지어 설명할 수 없을 때만 '검색된 자료에서 명확히 확인되지 않아요.'라고 말해주세요.
 
 [{source_name} 검색 자료]
 {context_str}
@@ -806,4 +809,3 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
-
