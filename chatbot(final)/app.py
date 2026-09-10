@@ -8,7 +8,32 @@ from datetime import datetime
 
 import streamlit as st
 
-from source_cleaning import attach_verified_sources
+try:
+    from source_cleaning import attach_verified_sources
+except Exception:
+    def attach_verified_sources(answer, contexts=None, search_stage=None):
+        """Fallback: source_cleaning.py가 배포 경로에 없더라도
+        답변 본문에서 출처 표기를 제거해 두는 안전장치.
+        """
+        if not answer:
+            return answer
+
+        answer = answer.replace("\r\n", "\n")
+        answer = re.sub(r"\s*\[출처\s*:\s*[^\]\n]+\]", "", answer, flags=re.IGNORECASE)
+        answer = re.sub(r"\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*", "", answer, flags=re.IGNORECASE)
+        answer = re.sub(r"(?im)^\s*(?:[-*•]\s*)?(?:\*\*)?출처\s*:\s*.*$", "", answer)
+        answer = re.sub(
+            r"\s*[（(]\s*(?:교과서|지도서|출처|[A-Za-z0-9_가-힣\-]+\.(?:md|txt))[^)）]*[)）]",
+            "",
+            answer,
+            flags=re.IGNORECASE,
+        )
+        answer = re.sub(r"(?im)^\s*(?:[-*•]\s*)?출처\s*:\s*[^\n]+$", "", answer)
+        answer = re.sub(r"\s*[A-Za-z0-9_가-힣\-]+_단원_(?:교과서|지도서)\.md(?:\s*p\.?\s*\d+(?:~\d+)?)?", "", answer)
+        answer = re.sub(r"\s*오세아니아_단원_(?:교과서|지도서)\.md", "", answer)
+        answer = re.sub(r"https?://\S+", "", answer)
+        answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
+        return answer
 
 # Streamlit Cloud 일부 실행 환경의 오래된 SQLite를 ChromaDB가 요구하는 버전으로 대체
 try:
