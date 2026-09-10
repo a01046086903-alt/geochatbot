@@ -305,8 +305,8 @@ def get_system_prompt(section, search_stage):
     stage_prompt = """[답변 및 출처 제약 조건]
 1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 시스템이 하단에 자동으로 표시하므로, 답변 본문에는 어떠한 출처 표기나 참고 자료 언급도 절대 하지 마세요. '참고한 핵심 내용 보기'라는 문구도 생성하면 안 됩니다.
 2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있어도 답변 본문에는 절대 적지 마세요.
-3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
-4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식을 극도로 신중하게 사용하여 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 확실하지 않거나 교과 수준을 넘어서는 내용은 절대 지어내지 말고 "선생님도 그 부분은 더 찾아봐야 할 것 같아요"라고 솔직하게 답변하세요.
+3. 제공된 [지식]이 있을 경우 절대 "[선생님이 생성형 AI를 이용하여 답변해 줄게요! 다만 답변에 오류가 있을 수 있어요.]"라는 문구를 사용하지 마세요.
+4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식을 극도로 신중하게 사용하여 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 생성형 AI를 이용하여 답변해 줄게요! 다만 답변에 오류가 있을 수 있어요.]" 라는 안내 문구를 출력하세요. 확실하지 않거나 교과 수준을 넘어서는 내용은 절대 지어내지 말고 "선생님도 그 부분은 더 찾아봐야 할 것 같아요"라고 솔직하게 답변하세요.
 5. [필수 거절 제약] 학생이 중학교 사회 교과 및 현재 학습 단원과 상관없는 질문(예: 수학, 영어, 사적인 질문, 게임, 타 교과 내용 등)을 할 경우에는 절대 정답이나 지식을 제공하지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 단호하고 정중하게 거절한 뒤, 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (안내 문구나 출처 표기 금지)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
@@ -334,20 +334,30 @@ def attach_verified_sources(answer, contexts, search_stage):
     return answer
 
 def render_context_source(context):
-    """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
+    """참고 문맥을 교과서·지도서 중심의 출처명으로 표시하며, 링크가 있다면 하이퍼링크로 만듦"""
     source = context.get("source", "").strip()
+    link = context.get("link", "").strip()
+    
     source_filename = os.path.basename(source)
     if "교과서" in source_filename:
         label = "교과서"
     elif "지도서" in source_filename:
         label = "지도서"
     else:
+        # 교과서/지도서가 아닌 경우 (예: 네이버 지식백과)
+        if link:
+            return f"[{source}]({link})"
         return source or "출처 정보 없음"
 
     page_match = re.search(r"p\.?\s*(\d+(?:~\d+)?)", source)
     if page_match:
-        return f"{label} p.{page_match.group(1)}"
-    return f"{label} (페이지 정보 없음)"
+        label_with_page = f"{label} p.{page_match.group(1)}"
+    else:
+        label_with_page = f"{label} (페이지 정보 없음)"
+        
+    if link:
+        return f"[{label_with_page}]({link})"
+    return label_with_page
 
 def parse_recommended_questions(response_text, fallback):
     """Gemini 응답에서 질문 목록만 추출해 버튼에 사용할 수 있게 정리한다."""
