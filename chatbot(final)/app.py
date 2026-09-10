@@ -53,7 +53,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
     # 1. Gemini 설정
     if gemini_key:
         genai.configure(api_key=gemini_key)
-        resources['gemini_model'] = genai.GenerativeModel('gemini-2.5-flash')
+        resources['gemini_model'] = genai.GenerativeModel('gemini-3.6-flash')
     
     # 2. ChromaDB 설정
     try:
