@@ -30,13 +30,26 @@ DATA_DIR = BASE_DIR
 if not os.path.exists(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md")):
     DATA_DIR = os.path.join(BASE_DIR, "md파일")
 
-env_path = os.path.join(BASE_DIR, "api키.env")
-load_dotenv(env_path if os.path.exists(env_path) else None)
+# 로컬 개발에서는 .env 파일을 읽고, Streamlit Cloud에서는 st.secrets를 우선 사용합니다.
+load_dotenv()
 
-# 기존에 하드코딩되었던 키들이 .env에 있다고 가정하거나, 없으면 하드코딩 값을 fallback으로 사용합니다.
-NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "Z3ctnxISEw4WbUOKGxP7")
-NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "B_RyJtcnoJ")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwVBeI1lO0j0SrT_CFwHqJu_txhwG7ORomkc5ex91afg")
+def get_secret(name, default=None):
+    """Streamlit Cloud의 secrets.toml 우선, 그다음 environment/.env 값, 마지막 fallback."""
+    try:
+        if hasattr(st, "secrets") and name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+
+    value = os.environ.get(name)
+    if value:
+        return value
+
+    return default
+
+NAVER_CLIENT_ID = get_secret("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = get_secret("NAVER_CLIENT_SECRET")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 LOCAL_DISTANCE_THRESHOLD = 0.45
 LOCAL_SOURCE_FILES = (
     "오세아니아_단원_교과서.md",
@@ -302,10 +315,11 @@ def get_system_prompt(section, search_stage):
 
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 답변 본문에 표시하지 않습니다.
-2. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
-3. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 생성형 AI를 이용해 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 다만 자료에 오류가 있을수도 있으니 교차검증이 필요하다는 내용을 답변 하단에 추가하세요.
-4. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
+1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 답변 본문에 표시하지 않으며, 필요한 자료 정보는 '참고한 핵심 내용 보기'에서만 확인할 수 있습니다.
+2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, '참고한 핵심 내용 보기'에 표시되는 자료 정보에만 페이지 번호를 사용하세요. 답변 본문에는 페이지 번호나 출처를 적지 마세요.
+3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
+4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
+5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
