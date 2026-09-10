@@ -8,6 +8,8 @@ from datetime import datetime
 
 import streamlit as st
 
+from source_cleaning import attach_verified_sources
+
 # Streamlit Cloud 일부 실행 환경의 오래된 SQLite를 ChromaDB가 요구하는 버전으로 대체
 try:
     import pysqlite3
@@ -66,7 +68,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
     # 1. Gemini 설정
     if gemini_key:
         genai.configure(api_key=gemini_key)
-        resources['gemini_model'] = genai.GenerativeModel('gemini-3.6-flash')
+        resources['gemini_model'] = genai.GenerativeModel('gemini-2.5-flash')
     
     # 2. ChromaDB 설정
     try:
@@ -323,23 +325,8 @@ def get_system_prompt(section, search_stage):
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
-def attach_verified_sources(answer, contexts, search_stage):
-    """답변 본문에 포함된 출처 표기를 제거한다."""
-    answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
-    answer = re.sub(
-        r"(?im)\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*\.md(?:\s+p\.?\s*\d+(?:~\d+)?)?[^\n]*",
-        "",
-        answer,
-    ).strip()
-    answer = re.sub(r"(?im)^\s*(?:\*\*)?출처\s*:\s*.*$", "", answer).strip()
-    answer = re.sub(
-        r"\s*[\(（][^\)）]*(?:\.md|p\.?\s*\d+|\d+쪽)[^\)）]*[\)）]",
-        "",
-        answer,
-        flags=re.IGNORECASE,
-    ).strip()
-    answer = re.sub(r"https?://\S+", "", answer).strip()
-    return answer
+# The app now calls the shared answer body cleaner from source_cleaning.py
+# so the de-source pass is centralized and consistent across all generation.
 
 def render_context_source(context):
     """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
