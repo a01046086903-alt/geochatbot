@@ -8,33 +8,6 @@ from datetime import datetime
 
 import streamlit as st
 
-try:
-    from source_cleaning import attach_verified_sources
-except Exception:
-    def attach_verified_sources(answer, contexts=None, search_stage=None):
-        """Fallback: source_cleaning.py가 배포 경로에 없더라도
-        답변 본문에서 출처 표기를 제거해 두는 안전장치.
-        """
-        if not answer:
-            return answer
-
-        answer = answer.replace("\r\n", "\n")
-        answer = re.sub(r"\s*\[출처\s*:\s*[^\]\n]+\]", "", answer, flags=re.IGNORECASE)
-        answer = re.sub(r"\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*", "", answer, flags=re.IGNORECASE)
-        answer = re.sub(r"(?im)^\s*(?:[-*•]\s*)?(?:\*\*)?출처\s*:\s*.*$", "", answer)
-        answer = re.sub(
-            r"\s*[（(]\s*(?:교과서|지도서|출처|[A-Za-z0-9_가-힣\-]+\.(?:md|txt))[^)）]*[)）]",
-            "",
-            answer,
-            flags=re.IGNORECASE,
-        )
-        answer = re.sub(r"(?im)^\s*(?:[-*•]\s*)?출처\s*:\s*[^\n]+$", "", answer)
-        answer = re.sub(r"\s*[A-Za-z0-9_가-힣\-]+_단원_(?:교과서|지도서)\.md(?:\s*p\.?\s*\d+(?:~\d+)?)?", "", answer)
-        answer = re.sub(r"\s*오세아니아_단원_(?:교과서|지도서)\.md", "", answer)
-        answer = re.sub(r"https?://\S+", "", answer)
-        answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
-        return answer
-
 # Streamlit Cloud 일부 실행 환경의 오래된 SQLite를 ChromaDB가 요구하는 버전으로 대체
 try:
     import pysqlite3
@@ -57,26 +30,13 @@ DATA_DIR = BASE_DIR
 if not os.path.exists(os.path.join(DATA_DIR, "2022_사회과_교육과정_성취기준_오세아니아.md")):
     DATA_DIR = os.path.join(BASE_DIR, "md파일")
 
-# 로컬 개발에서는 .env 파일을 읽고, Streamlit Cloud에서는 st.secrets를 우선 사용합니다.
-load_dotenv()
+env_path = os.path.join(BASE_DIR, "api키.env")
+load_dotenv(env_path if os.path.exists(env_path) else None)
 
-def get_secret(name, default=None):
-    """Streamlit Cloud의 secrets.toml 우선, 그다음 environment/.env 값, 마지막 fallback."""
-    try:
-        if hasattr(st, "secrets") and name in st.secrets:
-            return st.secrets[name]
-    except Exception:
-        pass
-
-    value = os.environ.get(name)
-    if value:
-        return value
-
-    return default
-
-NAVER_CLIENT_ID = get_secret("NAVER_CLIENT_ID")
-NAVER_CLIENT_SECRET = get_secret("NAVER_CLIENT_SECRET")
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+# 기존에 하드코딩되었던 키들이 .env에 있다고 가정하거나, 없으면 하드코딩 값을 fallback으로 사용합니다.
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "Z3ctnxISEw4WbUOKGxP7")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "B_RyJtcnoJ")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwVBeI1lO0j0SrT_CFwHqJu_txhwG7ORomkc5ex91afg")
 LOCAL_DISTANCE_THRESHOLD = 0.45
 LOCAL_SOURCE_FILES = (
     "오세아니아_단원_교과서.md",
@@ -93,7 +53,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
     # 1. Gemini 설정
     if gemini_key:
         genai.configure(api_key=gemini_key)
-        resources['gemini_model'] = genai.GenerativeModel('gemini-3.6-flash')
+        resources['gemini_model'] = genai.GenerativeModel('gemini-2.5-flash')
     
     # 2. ChromaDB 설정
     try:
@@ -176,17 +136,16 @@ def filter_relevant_contexts(query, contexts):
             
         context_str = "\n\n".join(context_items)
         
-        prompt = f"""[학생의 질문]에 대답하는 데 직접적인 도움이 되는 관련 정보를 담고 있는 [후보 문서]들의 ID를 골라주세요.
-질문에 답하는 데 필요한 핵심 사실이나 설명이 포함되어 있다면 관련이 있는 것입니다.
-반면, 질문과 전혀 무관하거나 단순한 대단원/소단원 제목, 목차 수준의 정보라면 관련이 없으므로 제외해야 합니다.
+        prompt = f"""[학생의 질문]에 대해 완벽하게 대답할 수 있는 '구체적인 정답이나 핵심 정보'가 실제로 들어있는 [후보 문서]들의 ID만 골라주세요.
+단순히 질문과 관련된 주제(키워드)를 다루고 있더라도, 질문에 대한 명확한 정답이나 충분한 설명이 그 문서 안에 없다면 절대 고르면 안 됩니다.
 
 [학생의 질문]: {query}
 
 [후보 문서 목록]:
 {context_str}
 
-출력 형식: 관련이 있는 문서의 ID들을 쉼표로 구분하여 출력하세요. (예: 0, 2)
-만약 모든 문서가 질문과 전혀 관련이 없고 엉뚱한 내용이라면 반드시 'NONE'이라고만 출력하세요.
+출력 형식: 질문에 대한 정답을 확실하게 도출할 수 있는 문서의 ID들을 쉼표로 구분하여 출력하세요. (예: 0, 2)
+만약 어떤 문서로도 질문에 대한 명확한 정답을 낼 수 없다면 반드시 'NONE'이라고만 출력하세요.
 다른 설명은 절대 하지 마세요."""
         
         response = model.generate_content(prompt)
@@ -342,16 +301,35 @@ def get_system_prompt(section, search_stage):
 
     # 검색 단계별 제약 조건
     stage_prompt = """[답변 및 출처 제약 조건]
-1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 답변 본문에 표시하지 않으며, 필요한 자료 정보는 '참고한 핵심 내용 보기'에서만 확인할 수 있습니다.
-2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있다면, '참고한 핵심 내용 보기'에 표시되는 자료 정보에만 페이지 번호를 사용하세요. 답변 본문에는 페이지 번호나 출처를 적지 마세요.
+1. 현재 답변의 참고 자료 유형은 [{knowledge_source}]입니다. 제공된 [지식]이 있다면 반드시 그 내용만 근거로 답변하세요. 출처는 시스템이 하단에 자동으로 표시하므로, 답변 본문에는 어떠한 출처 표기나 참고 자료 언급도 절대 하지 마세요. '참고한 핵심 내용 보기'라는 문구도 생성하면 안 됩니다.
+2. 만약 제공된 [지식]의 텍스트(Content) 내부에 페이지 번호(예: p106, 106쪽 등)가 적혀있어도 답변 본문에는 절대 적지 마세요.
 3. 제공된 [지식]이 있을 경우 절대 "[선생님이 가진 추가 지식으로 답변해 줄게요!]"라는 문구를 사용하지 마세요.
 4. 제공된 [지식]이 비어있을 때만 선생님의 자체 지식으로 답변합니다. 이때는 답변 맨 앞에 반드시 "[선생님이 가진 추가 지식으로 답변해 줄게요!]" 라는 안내 문구를 출력하세요. 실제로 검색하지 않은 참고 출처나 인터넷 주소(URL)는 절대 제시하지 마세요.
 5. [필수 거절 제약] 학생이 사회 교과 및 현재 학습 단원과 아예 상관없는 엉뚱한 질문을 할 경우에는 절대 지식이나 정답을 알려주지 마세요. "선생님은 사회 수업을 위한 챗봇이에요."라며 정중하게 거절한 뒤, 학습 내용에 다시 집중할 수 있도록 현재 단원과 관련된 흥미로운 추천 질문을 1~2개 직접 제시해주세요. (이 경우에는 안내 문구나 출처 표기를 하지 않습니다.)"""
 
     return f"{base_persona}\n\n{section_prompt}\n\n{stage_prompt.format(knowledge_source=knowledge_source)}"
 
-# The app now calls the shared answer body cleaner from source_cleaning.py
-# so the de-source pass is centralized and consistent across all generation.
+def attach_verified_sources(answer, contexts, search_stage):
+    """답변 본문에 포함된 출처 표기를 제거한다."""
+    # LLM이 임의로 생성한 <details> 참고한 핵심 내용 보기 블록 제거
+    answer = re.sub(r"(?is)<details>.*?참고한 핵심 내용 보기.*?</details>", "", answer).strip()
+    answer = re.sub(r"(?im)^\s*🔍\s*참고한 핵심 내용 보기.*$", "", answer).strip()
+    
+    answer = re.sub(r"\s*\[출처\s*:\s*[^\]]+\]", "", answer).strip()
+    answer = re.sub(
+        r"(?im)\s*\[교과서\s*[·･]\s*지도서\]\s*[^\n]*\.md(?:\s+p\.?\s*\d+(?:~\d+)?)?[^\n]*",
+        "",
+        answer,
+    ).strip()
+    answer = re.sub(r"(?im)^\s*(?:\*\*)?출처\s*:\s*.*$", "", answer).strip()
+    answer = re.sub(
+        r"\s*[\(（][^\)）]*(?:\.md|p\.?\s*\d+|\d+쪽)[^\)）]*[\)）]",
+        "",
+        answer,
+        flags=re.IGNORECASE,
+    ).strip()
+    answer = re.sub(r"https?://\S+", "", answer).strip()
+    return answer
 
 def render_context_source(context):
     """참고 문맥을 교과서·지도서 중심의 출처명으로 표시"""
@@ -674,15 +652,13 @@ if not st.session_state.messages and not has_new_input:
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"], unsafe_allow_html=True)
-        if msg["role"] == "assistant" and not msg["content"].startswith("### 📝 복습 퀴즈 타임!"):
-            if msg.get("contexts"):
-                with st.expander("🔍 참고한 핵심 내용 보기"):
-                    for c in msg["contexts"]:
-                        key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
-                        if c.get("link"):
-                            st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
-                        st.markdown("---")
+        
+        if msg.get("contexts"):
+            with st.expander("🔍 참고한 핵심 내용 보기"):
+                for c in msg["contexts"]:
+                    st.markdown(f"- **출처:** {render_context_source(c)}")
+                    if c.get("key_sentence"):
+                        st.info(c["key_sentence"])
         
         # 마지막 메시지가 assistant 이고 현재 새로운 질문 입력이 없을 때만 출력
         if idx == len(st.session_state.messages) - 1 and msg["role"] == "assistant" and not has_new_input:
@@ -746,15 +722,12 @@ if user_input:
             
             st.markdown(bot_answer)
             
-            # 출처보기 Expander
             if contexts:
                 with st.expander("🔍 참고한 핵심 내용 보기"):
                     for c in contexts:
-                        key_sentence = c.get('key_sentence', c['doc'][:80])
-                        st.markdown(f"**출처:** `{render_context_source(c)}`  \n**핵심 문장:** {key_sentence}")
-                        if c.get("link"):
-                            st.markdown(f"**링크:** [웹페이지 이동]({c['link']})")
-                        st.markdown("---")
+                        st.markdown(f"- **출처:** {render_context_source(c)}")
+                        if c.get("key_sentence"):
+                            st.info(c["key_sentence"])
             
             st.session_state.messages.append({
                 "role": "assistant", 
@@ -833,3 +806,4 @@ if user_input:
                     else:
                         st.markdown(quiz_text)
                         st.session_state.messages.append({"role": "assistant", "content": f"### 📝 복습 퀴즈 타임!\n\n{quiz_text}"})
+
