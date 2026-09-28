@@ -53,7 +53,7 @@ def init_resources(gemini_key, naver_id, naver_secret):
     # 1. Gemini 설정
     if gemini_key:
         genai.configure(api_key=gemini_key)
-        resources['gemini_model'] = genai.GenerativeModel('gemini-3.5-flash')
+        resources['gemini_model'] = genai.GenerativeModel('gemini-2.5-flash')
     
     # 2. ChromaDB 설정
     try:
@@ -292,9 +292,7 @@ def get_system_prompt(section, search_stage):
         elif section == "6-2. 태평양 지역의 환경 문제와 해결 방안":
             section_prompt = "주요 역할: 이 단원에서는 '발표 자료 준비 도우미 챗봇'으로 활동합니다. 학생이 태평양 지역의 환경 문제와 해결 방안에 대한 발표 자료를 만들 때 활용하기 좋은 유익한 자료를 적극적으로 추천해주고, 발표 내용 구성에 도움이 되는 참신한 아이디어를 풍부하게 제공하세요."
         else: # 6-3. 극지방의 중요성과 지역 개발
-            section_prompt = """# Role and Persona
-당신은 중등 사회과 단원 '6-3. 극지방의 중요성과 지역 개발'을 학습하는 학생들을 돕는 세계 최고의 꼼꼼한 '교육용 AI 보조교사'입니다.
-당신의 주된 임무는 학생들이 '극지역 미래 포럼' 역할극 대본을 스스로 작성하고 완성도를 높일 수 있도록 안내, 검증, 조언하는 것입니다. 학생에게 친절하고 격려하는 어조를 사용하되, 교육적 목적을 위해 비판적 사고를 유도해야 합니다.
+            section_prompt = "주요 역할: 이 단원에서는 '역할극 대본 준비 도우미 챗봇'으로 활동합니다. 학생들이 '극지역 미래 포럼' 역할극 대본을 스스로 작성하고 완성도를 높일 수 있도록 안내, 검증, 조언하는 것입니다. 학생에게 친절하고 격려하는 어조를 사용하되, 교육적 목적을 위해 비판적 사고를 유도해야 합니다.
 # Core Objective
 학생들이 사회자, 개발론자, 보존론자의 입장을 깊이 있게 이해하고, 타당한 근거를 바탕으로 논리적인 역할극 대본을 완성하도록 돕는다.
 # Strict Rules (절대 준수 사항)
@@ -407,6 +405,13 @@ def parse_recommended_questions(response_text, fallback):
 @st.cache_data
 def get_initial_questions(section):
     """성취기준을 바탕으로 3개의 탐구 질문 생성"""
+    if section == "6-3. 극지방의 중요성과 지역 개발":
+        return [
+            "역할극 사회자의 첫 인사말을 어떻게 시작할까요?", 
+            "개발론자의 입장에서 주장할 수 있는 근거는 무엇이 있나요?", 
+            "보존론자의 대본 뼈대를 어떻게 잡으면 좋을까요?"
+        ]
+
     if not model:
         return ["오세아니아의 대표적인 기후는 무엇인가요?", "태평양의 주요 환경 문제는 어떤 것들이 있나요?", "오세아니아 사람들은 어떤 집에 살고 있나요?"]
         
@@ -432,26 +437,28 @@ def get_initial_questions(section):
         return ["오세아니아의 기후 특징은 무엇인가요?", "태평양의 환경 문제를 어떻게 해결할 수 있을까요?", "오세아니아의 독특한 동물은 무엇이 있나요?"]
 
 @st.cache_data
-def get_followup_questions(user_query, bot_response):
+def get_followup_questions(user_query, bot_response, section):
     """학생의 최근 질문과 답변을 바탕으로 3개의 후속 질문 생성"""
     if not model:
-        return ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"]
+        return ["기후 변화의 영향은?", "자원 개발의 장단점은?", "어떻게 해결할 수 있을까요?"]
     try:
-        prompt = f"""중학교 1학년 학생이 오세아니아 사회 학습 중 다음과 같은 대화를 나눴습니다.
+        topic_context = f"'{section}' 단원"
+        prompt = f"""중학교 1학년 학생이 {topic_context} 사회 학습 중 다음과 같은 대화를 나눴습니다.
 학생 질문: {user_query}
 선생님 답변: {bot_response}
 
-이 대화 내용에 이어 학생이 스스로 탐구를 심화하거나 궁금해할 만한 '꼬리 질문(후속 질문)' 3가지를 만들어주세요.
+이 대화 내용에 이어 학생이 스스로 탐구를 심화하거나 궁금해할 만한 '꼬리 질문(후속 질문)' 3가지를 만들어주세요. 
+(단, '극지방' 관련 단원일 경우, 역할극 대본 작성에 도움이 될 만한 팁이나 논리 보강 질문을 포함해주세요.)
 반드시 질문은 핵심만 담아 아주 짧고 간결하게(20자 이내) 작성하세요.
 반드시 각 질문은 줄바꿈으로 구분된 텍스트로만 출력하세요. (예: 1. ~~~?)"""
         response = model.generate_content(prompt)
         return parse_recommended_questions(
             response.text,
-            ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"],
+            ["기후 변화의 영향은?", "자원 개발의 장단점은?", "어떻게 해결할 수 있을까요?"],
         )
     except Exception as e:
         print(f"후속 질문 생성 오류: {e}")
-        return ["기후 변화의 영향은?", "오세아니아의 자원은?", "태평양의 섬들의 운명은?"]
+        return ["기후 변화의 영향은?", "자원 개발의 장단점은?", "어떻게 해결할 수 있을까요?"]
 
 @st.cache_data
 def extract_key_sentence(doc, answer):
@@ -780,7 +787,7 @@ if user_input:
             })
             
             # 후속 질문 생성 및 저장
-            fq = get_followup_questions(user_input, bot_answer)
+            fq = get_followup_questions(user_input, bot_answer, section)
             st.session_state.followup_questions = fq
             
             # 답변 재요청 버튼 렌더링 (후속 질문보다 먼저)
